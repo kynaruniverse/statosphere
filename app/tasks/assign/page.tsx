@@ -1,23 +1,35 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
-import { useRouter, useSearchParams } from 'next/navigation'
-import type { StatCategory, Profile } from '@/lib/types'
+import { useRouter } from 'next/navigation'
+import type { StatCategory } from '@/lib/types'
 import Link from 'next/link'
+
+type CouncilOption = {
+  id: string
+  name: string
+  role: 'owner' | 'member'
+  owner_id: string
+}
+
+type MemberOption = {
+  id: string
+  full_name: string | null
+  username: string | null
+}
 
 export default function AssignTaskPage() {
   const router = useRouter()
-  const params = useSearchParams()
   const [loading, setLoading] = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
   const [stats, setStats] = useState<StatCategory[]>([])
-  const [councils, setCouncils] = useState<any[]>([])
+  const [councils, setCouncils] = useState<CouncilOption[]>([])
   const [selectedCouncil, setSelectedCouncil] = useState<string>('')
   const [selectedStat, setSelectedStat] = useState<string>('')
   const [assignTo, setAssignTo] = useState<string>('')
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [councilMembers, setCouncilMembers] = useState<any[]>([])
+  const [councilMembers, setCouncilMembers] = useState<MemberOption[]>([])
   const [success, setSuccess] = useState(false)
 
   useEffect(() => {
@@ -25,32 +37,45 @@ export default function AssignTaskPage() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/login'); return }
 
-      // Get stats
       const { data: statsData } = await supabase
         .from('stat_categories')
         .select('*')
         .order('name')
       if (statsData) setStats(statsData)
 
-      // Get councils where user is a member
       const { data: memberOf } = await supabase
         .from('council_members')
-        .select('council_id, councils(id, name, owner_id, profiles!councils_owner_id_fkey(*))')
+        .select('council_id, councils(id, name, owner_id)')
         .eq('member_id', user.id)
         .eq('status', 'active')
 
-      // Get council user owns
       const { data: ownedCouncil } = await supabase
         .from('councils')
         .select('*')
         .eq('owner_id', user.id)
         .single()
 
-      const allCouncils = []
-      if (ownedCouncil) allCouncils.push({ ...ownedCouncil, role: 'owner' })
+      const allCouncils: CouncilOption[] = []
+
+      if (ownedCouncil) {
+        allCouncils.push({
+          id: ownedCouncil.id,
+          name: ownedCouncil.name,
+          owner_id: ownedCouncil.owner_id,
+          role: 'owner'
+        })
+      }
+
       if (memberOf) {
         memberOf.forEach((m: any) => {
-          if (m.councils) allCouncils.push({ ...m.councils, role: 'member' })
+          if (m.councils) {
+            allCouncils.push({
+              id: m.councils.id,
+              name: m.councils.name,
+              owner_id: m.councils.owner_id,
+              role: 'member'
+            })
+          }
         })
       }
 
@@ -64,38 +89,37 @@ export default function AssignTaskPage() {
   useEffect(() => {
     const loadMembers = async () => {
       if (!selectedCouncil) return
-
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
       const council = councils.find(c => c.id === selectedCouncil)
-      const members = []
+      if (!council) return
 
-      if (council?.role === 'owner') {
-        // Owner assigns to self (the council owner)
+      const members: MemberOption[] = []
+
+      if (council.role === 'owner') {
         const { data: ownerProfile } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, full_name, username')
           .eq('id', user.id)
           .single()
-        if (ownerProfile) members.push({ ...ownerProfile, label: 'Yourself' })
+        if (ownerProfile) members.push(ownerProfile)
 
-        // Also get actual council members
-        const { data: councilMembers } = await supabase
+        const { data: councilMembersData } = await supabase
           .from('council_members')
-          .select('*, profiles(*)')
+          .select('member_id, profiles(id, full_name, username)')
           .eq('council_id', selectedCouncil)
           .eq('status', 'active')
-        if (councilMembers) {
-          councilMembers.forEach((m: any) => {
+
+        if (councilMembersData) {
+          councilMembersData.forEach((m: any) => {
             if (m.profiles) members.push(m.profiles)
           })
         }
       } else {
-        // Member assigns to the council owner
         const { data: ownerProfile } = await supabase
           .from('profiles')
-          .select('*')
+          .select('id, full_name, username')
           .eq('id', council.owner_id)
           .single()
         if (ownerProfile) members.push(ownerProfile)
@@ -144,12 +168,9 @@ export default function AssignTaskPage() {
         <h1 className="text-3xl font-black" style={{ color: '#F1F5F9' }}>
           Challenge sent.
         </h1>
-        <p style={{ color: '#64748B' }}>
-          The task is now live and waiting.
-        </p>
+        <p style={{ color: '#64748B' }}>The task is now live and waiting.</p>
         <div className="flex gap-3 justify-center">
-          <button
-            onClick={() => setSuccess(false)}
+          <button onClick={() => { setSuccess(false); setTitle(''); setDescription('') }}
             className="px-6 py-3 rounded-xl font-bold text-sm border"
             style={{ borderColor: '#2D3158', color: '#64748B' }}>
             Assign Another
@@ -193,7 +214,6 @@ export default function AssignTaskPage() {
 
         <div className="space-y-5">
 
-          {/* Assign to */}
           {councilMembers.length > 1 && (
             <div className="space-y-2">
               <label className="text-sm font-medium" style={{ color: '#64748B' }}>
@@ -210,14 +230,13 @@ export default function AssignTaskPage() {
                 }}>
                 {councilMembers.map(m => (
                   <option key={m.id} value={m.id}>
-                    {m.full_name || m.username || m.label || 'Member'}
+                    {m.full_name || m.username || 'Member'}
                   </option>
                 ))}
               </select>
             </div>
           )}
 
-          {/* Stat */}
           <div className="space-y-2">
             <label className="text-sm font-medium" style={{ color: '#64748B' }}>
               Which stat does this build?
@@ -241,7 +260,6 @@ export default function AssignTaskPage() {
             </div>
           </div>
 
-          {/* Title */}
           <div className="space-y-2">
             <label className="text-sm font-medium" style={{ color: '#64748B' }}>
               Task title
@@ -260,7 +278,6 @@ export default function AssignTaskPage() {
             />
           </div>
 
-          {/* Description */}
           <div className="space-y-2">
             <label className="text-sm font-medium" style={{ color: '#64748B' }}>
               Details <span style={{ color: '#2D3158' }}>(optional)</span>
@@ -268,7 +285,7 @@ export default function AssignTaskPage() {
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="Give context, rules, or requirements for this challenge..."
+              placeholder="Give context, rules, or requirements..."
               rows={3}
               className="w-full px-4 py-4 rounded-2xl text-base outline-none
                 border resize-none"
