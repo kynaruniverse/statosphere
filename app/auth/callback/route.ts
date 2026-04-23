@@ -1,6 +1,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import type { CookieOptions } from '@supabase/ssr'
 
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url)
@@ -13,7 +14,7 @@ export async function GET(request: NextRequest) {
     )
   }
 
-  // ✅ IMPORTANT: create response FIRST
+  // Create response FIRST so we can set cookies on it
   const response = NextResponse.redirect(
     new URL(next, requestUrl.origin)
   )
@@ -26,10 +27,9 @@ export async function GET(request: NextRequest) {
         getAll() {
           return request.cookies.getAll()
         },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
           cookiesToSet.forEach(({ name, value, options }) => {
-            // ✅ THIS is the fix
-            response.cookies.set(name, value, options)
+            response.cookies.set(name, value, options ?? {})
           })
         },
       },
