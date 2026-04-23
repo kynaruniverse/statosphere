@@ -1,89 +1,291 @@
 'use client'
+
+/**
+ * app/page.tsx — Statosphere Auth Page
+ *
+ * ⚠️  SUPABASE SETUP REQUIRED:
+ *   For password sign-up to work without the "check your email" loop,
+ *   go to Supabase Dashboard → Authentication → Email →
+ *   disable "Confirm email". Without this, new sign-ups via password
+ *   will not create a session on this tab.
+ *
+ * Auth flows:
+ *   Login tab   → email + password (signInWithPassword)
+ *                 "Sign in with a code instead" link → OTP flow
+ *   Signup tab  → email + password (signUp)
+ *   OTP flow    → send code (signInWithOtp) → verify 6-digit code
+ */
+
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
-type Screen = 'hero' | 'enter_email' | 'enter_code' | 'loading'
+type Tab = 'login' | 'signup'
+type LoginMode = 'password' | 'otp_email' | 'otp_code'
 
-const STATS = [
-  { name: 'Discipline', icon: '⚔️', value: 74, color: '#7C3AED' },
-  { name: 'Strength',   icon: '💪', value: 61, color: '#A3E635' },
-  { name: 'Charisma',   icon: '✨', value: 88, color: '#7C3AED' },
-  { name: 'Resilience', icon: '🛡️', value: 53, color: '#A3E635' },
-]
+// ── Style helpers ─────────────────────────────────────────────────────────────
+
+const S = {
+  heading: {
+    fontSize: 28,
+    fontWeight: 800,
+    lineHeight: 1.15,
+    letterSpacing: '-0.02em',
+    color: '#1C1410',
+    margin: '0 0 6px',
+  } as React.CSSProperties,
+
+  subtext: {
+    fontSize: 14,
+    color: '#9B8F85',
+    margin: '0 0 28px',
+    lineHeight: 1.55,
+  } as React.CSSProperties,
+
+  label: {
+    display: 'block',
+    fontSize: 11,
+    fontWeight: 700,
+    color: '#6B5E54',
+    letterSpacing: '0.07em',
+    textTransform: 'uppercase' as const,
+    marginBottom: 7,
+  } as React.CSSProperties,
+
+  input: (hasError: boolean): React.CSSProperties => ({
+    display: 'block',
+    width: '100%',
+    padding: '13px 16px',
+    border: `1.5px solid ${hasError ? '#EF4444' : '#DDD6CE'}`,
+    borderRadius: 12,
+    fontSize: 15,
+    color: '#1C1410',
+    background: '#FAF7F3',
+    outline: 'none',
+    boxSizing: 'border-box',
+    fontFamily: 'inherit',
+    transition: 'border-color 0.15s',
+  }),
+
+  primaryBtn: (disabled: boolean): React.CSSProperties => ({
+    display: 'block',
+    width: '100%',
+    padding: '14px 20px',
+    background: disabled ? '#E8E0D8' : '#7C3AED',
+    color: disabled ? '#B0A396' : '#FFFFFF',
+    border: 'none',
+    borderRadius: 12,
+    fontSize: 15,
+    fontWeight: 700,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    marginTop: 20,
+    transition: 'all 0.15s',
+    fontFamily: 'inherit',
+    letterSpacing: '0.01em',
+  }),
+
+  ghostBtn: {
+    display: 'block',
+    width: '100%',
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    fontSize: 13,
+    color: '#9B8F85',
+    marginTop: 14,
+    fontFamily: 'inherit',
+    padding: '4px 0',
+    textAlign: 'center' as const,
+    transition: 'color 0.15s',
+  } as React.CSSProperties,
+
+  backBtn: {
+    background: 'none',
+    border: 'none',
+    cursor: 'pointer',
+    color: '#9B8F85',
+    fontSize: 13,
+    padding: '0 0 24px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 4,
+    fontFamily: 'inherit',
+  } as React.CSSProperties,
+
+  error: {
+    fontSize: 13,
+    color: '#C0392B',
+    margin: '10px 0 0',
+    padding: '10px 14px',
+    background: 'rgba(239,68,68,0.06)',
+    borderRadius: 10,
+    border: '1px solid rgba(239,68,68,0.15)',
+    lineHeight: 1.4,
+  } as React.CSSProperties,
+
+  success: {
+    fontSize: 13,
+    color: '#15803D',
+    margin: '10px 0 0',
+    padding: '10px 14px',
+    background: 'rgba(22,163,74,0.07)',
+    borderRadius: 10,
+    border: '1px solid rgba(22,163,74,0.18)',
+    lineHeight: 1.4,
+  } as React.CSSProperties,
+}
+
+// ── Component ─────────────────────────────────────────────────────────────────
 
 export default function HomePage() {
   const router = useRouter()
-  const [screen, setScreen]     = useState<Screen>('loading')
-  const [email, setEmail]       = useState('')
-  const [code, setCode]         = useState('')
-  const [submitting, setSubmitting] = useState(false)
-  const [error, setError]       = useState('')
+
+  const [ready, setReady]           = useState(false)
+  const [tab, setTab]               = useState<Tab>('login')
+  const [loginMode, setLoginMode]   = useState<LoginMode>('password')
+
+  const [email, setEmail]           = useState('')
+  const [password, setPassword]     = useState('')
+  const [otpEmail, setOtpEmail]     = useState('')
   const [codeInputs, setCodeInputs] = useState(['', '', '', '', '', ''])
 
-  // Smart redirect — already logged in? Go to dashboard
+  const [loading, setLoading]       = useState(false)
+  const [error, setError]           = useState('')
+  const [successMsg, setSuccessMsg] = useState('')
+
+  // ── Auth check ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    const check = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (user) {
-        router.replace('/dashboard')
-      } else {
-        setScreen('hero')
-      }
-    }
-    check()
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      if (user) router.replace('/dashboard')
+      else setReady(true)
+    })
   }, [router])
 
-  const handleSendCode = async () => {
-    if (!email.trim()) return
-    setSubmitting(true)
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+  const afterAuth = async (userId: string, defaultRoute: string) => {
+    const { data: profile } = await supabase
+      .from('profiles')
+      .select('onboarding_complete')
+      .eq('id', userId)
+      .single()
+    router.replace(profile?.onboarding_complete ? '/dashboard' : '/onboarding')
+  }
+
+  const resetForm = () => {
+    setError('')
+    setSuccessMsg('')
+    setPassword('')
+  }
+
+  const handleTabChange = (t: Tab) => {
+    setTab(t)
+    setLoginMode('password')
+    resetForm()
+  }
+
+  // ── Login ────────────────────────────────────────────────────────────────────
+  const handleLogin = async () => {
+    if (!email.trim() || !password) return
+    setLoading(true)
+    setError('')
+
+    const { data, error: signInError } = await supabase.auth.signInWithPassword({
+      email: email.trim().toLowerCase(),
+      password,
+    })
+
+    if (signInError) {
+      setError(
+        signInError.message === 'Invalid login credentials'
+          ? 'Incorrect email or password.'
+          : signInError.message
+      )
+      setLoading(false)
+      return
+    }
+
+    if (data.user) await afterAuth(data.user.id, '/dashboard')
+  }
+
+  // ── Sign up ──────────────────────────────────────────────────────────────────
+  const handleSignup = async () => {
+    if (!email.trim() || !password) return
+    if (password.length < 6) {
+      setError('Password must be at least 6 characters.')
+      return
+    }
+    setLoading(true)
+    setError('')
+    setSuccessMsg('')
+
+    const { data, error: signUpError } = await supabase.auth.signUp({
+      email: email.trim().toLowerCase(),
+      password,
+    })
+
+    if (signUpError) {
+      setError(signUpError.message)
+      setLoading(false)
+      return
+    }
+
+    if (data.session) {
+      // Email confirmation is OFF — signed in immediately ✓
+      await afterAuth(data.session.user.id, '/onboarding')
+    } else {
+      // Email confirmation is ON — session won't be set here
+      setSuccessMsg(
+        'Check your inbox for a confirmation link. Once confirmed, ' +
+        'come back and sign in with your password.'
+      )
+      setLoading(false)
+    }
+  }
+
+  // ── OTP: send code ───────────────────────────────────────────────────────────
+  const handleSendOtp = async () => {
+    if (!otpEmail.trim()) return
+    setLoading(true)
     setError('')
 
     const { error: otpError } = await supabase.auth.signInWithOtp({
-      email: email.trim().toLowerCase(),
+      email: otpEmail.trim().toLowerCase(),
       options: { shouldCreateUser: true },
     })
 
     if (otpError) {
       setError(otpError.message)
-      setSubmitting(false)
+      setLoading(false)
       return
     }
 
-    setSubmitting(false)
-    setScreen('enter_code')
+    setLoading(false)
+    setLoginMode('otp_code')
   }
 
-  const handleVerifyCode = async () => {
+  // ── OTP: verify code ─────────────────────────────────────────────────────────
+  const handleVerifyOtp = async () => {
     const fullCode = codeInputs.join('')
     if (fullCode.length !== 6) return
-    setSubmitting(true)
+    setLoading(true)
     setError('')
 
     const { data, error: verifyError } = await supabase.auth.verifyOtp({
-      email: email.trim().toLowerCase(),
+      email: otpEmail.trim().toLowerCase(),
       token: fullCode,
       type: 'email',
     })
 
     if (verifyError) {
       setError('Incorrect code. Please try again.')
-      setSubmitting(false)
+      setLoading(false)
       return
     }
 
-    // Check if new user needs onboarding
-    if (data.user) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('onboarding_complete')
-        .eq('id', data.user.id)
-        .single()
-
-      router.replace(profile?.onboarding_complete ? '/dashboard' : '/onboarding')
-    }
+    if (data.user) await afterAuth(data.user.id, '/dashboard')
   }
 
+  // ── OTP code input handlers ──────────────────────────────────────────────────
   const handleCodeInput = (index: number, val: string) => {
     const digit = val.replace(/\D/g, '').slice(-1)
     const next = [...codeInputs]
@@ -92,22 +294,16 @@ export default function HomePage() {
     setError('')
 
     if (digit && index < 5) {
-      const nextInput = document.getElementById(`code-${index + 1}`)
-      nextInput?.focus()
+      document.getElementById(`otp-${index + 1}`)?.focus()
     }
     if (next.every(d => d !== '') && digit) {
-      // Auto-submit when all 6 filled
-      setTimeout(() => {
-        const btn = document.getElementById('verify-btn')
-        btn?.click()
-      }, 80)
+      setTimeout(() => document.getElementById('verify-btn')?.click(), 80)
     }
   }
 
   const handleCodeKeyDown = (index: number, e: React.KeyboardEvent) => {
     if (e.key === 'Backspace' && !codeInputs[index] && index > 0) {
-      const prev = document.getElementById(`code-${index - 1}`)
-      prev?.focus()
+      document.getElementById(`otp-${index - 1}`)?.focus()
     }
   }
 
@@ -118,444 +314,404 @@ export default function HomePage() {
     pasted.split('').forEach((d, i) => { next[i] = d })
     setCodeInputs(next)
     if (pasted.length === 6) {
-      setTimeout(() => {
-        const btn = document.getElementById('verify-btn')
-        btn?.click()
-      }, 80)
+      setTimeout(() => document.getElementById('verify-btn')?.click(), 80)
     }
   }
 
-  if (screen === 'loading') {
+  // ── Loading screen ───────────────────────────────────────────────────────────
+  if (!ready) {
     return (
-      <main style={{ minHeight: '100svh', background: '#080A0F', display: 'flex',
-        alignItems: 'center', justifyContent: 'center' }}>
-        <div style={{ width: 32, height: 32, border: '2px solid #2D3158',
-          borderTopColor: '#7C3AED', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+      <main style={{
+        minHeight: '100svh',
+        background: '#EEE8DE',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}>
+        <div style={{
+          width: 26,
+          height: 26,
+          borderRadius: '50%',
+          border: '2px solid #D8D0C7',
+          borderTopColor: '#7C3AED',
+          animation: 'spin 0.8s linear infinite',
+        }} />
         <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
       </main>
     )
   }
 
+  // ── Main render ──────────────────────────────────────────────────────────────
   return (
     <main style={{
       minHeight: '100svh',
-      background: '#080A0F',
-      color: '#F1F5F9',
-      fontFamily: "'DM Sans', system-ui, sans-serif",
-      overflowX: 'hidden',
+      background: '#EEE8DE',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'center',
+      justifyContent: 'center',
+      padding: '24px 20px',
       position: 'relative',
+      overflow: 'hidden',
+      fontFamily: "'Bricolage Grotesque', 'DM Sans', system-ui, sans-serif",
     }}>
 
-      {/* ── Ambient background glow ── */}
+      {/* ── Ambient blobs ── */}
       <div style={{
-        position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0,
-        background: `
-          radial-gradient(ellipse 60% 50% at 15% 20%, rgba(124,58,237,0.12) 0%, transparent 70%),
-          radial-gradient(ellipse 40% 40% at 85% 75%, rgba(163,230,53,0.06) 0%, transparent 70%)
-        `,
+        position: 'fixed', top: -120, right: -100, width: 360, height: 360,
+        borderRadius: '50%', background: 'rgba(124,58,237,0.07)',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'fixed', bottom: -80, left: -80, width: 280, height: 280,
+        borderRadius: '50%', background: 'rgba(163,230,53,0.09)',
+        pointerEvents: 'none',
+      }} />
+      <div style={{
+        position: 'fixed', top: '55%', left: -40, width: 120, height: 120,
+        borderRadius: '50%', background: 'rgba(124,58,237,0.04)',
+        pointerEvents: 'none',
       }} />
 
-      {/* ── Subtle grid texture ── */}
+      {/* ══════════════════════════════════════════════════════════════
+          CARD
+      ══════════════════════════════════════════════════════════════ */}
       <div style={{
-        position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 0, opacity: 0.025,
-        backgroundImage: `
-          linear-gradient(rgba(163,230,53,0.6) 1px, transparent 1px),
-          linear-gradient(90deg, rgba(163,230,53,0.6) 1px, transparent 1px)
-        `,
-        backgroundSize: '40px 40px',
-      }} />
+        width: '100%',
+        maxWidth: 396,
+        background: '#FFFFFF',
+        borderRadius: 24,
+        padding: '32px 28px 36px',
+        boxShadow: '0 2px 48px rgba(0,0,0,0.09), 0 1px 3px rgba(0,0,0,0.05)',
+        position: 'relative',
+        zIndex: 1,
+      }}>
 
-      <div style={{ position: 'relative', zIndex: 1, maxWidth: 420,
-        margin: '0 auto', padding: '0 24px', paddingTop: 'env(safe-area-inset-top)' }}>
-
-        {/* ── TOP NAV ── */}
-        <nav style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          paddingTop: 24, paddingBottom: 8 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{
-              width: 28, height: 28, borderRadius: 8,
-              background: 'linear-gradient(135deg, #7C3AED, #A3E635)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              fontSize: 14, fontWeight: 900,
-            }}>S</div>
-            <span style={{ fontSize: 13, fontWeight: 700, letterSpacing: '0.12em',
-              textTransform: 'uppercase', color: '#64748B' }}>
-              Statosphere
-            </span>
+        {/* ── Logo mark ── */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28,
+        }}>
+          <div style={{
+            width: 34, height: 34, borderRadius: 10,
+            background: 'linear-gradient(135deg, #7C3AED 0%, #65A30D 100%)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontWeight: 900, fontSize: 16, color: '#fff', flexShrink: 0,
+            letterSpacing: '-0.02em',
+          }}>
+            S
           </div>
-          {screen === 'hero' && (
+          <span style={{
+            fontSize: 13, fontWeight: 700, letterSpacing: '0.12em',
+            textTransform: 'uppercase', color: '#1C1410',
+          }}>
+            Statosphere
+          </span>
+        </div>
+
+        {/* ══════════════════════════════
+            OTP: ENTER EMAIL
+        ══════════════════════════════ */}
+        {loginMode === 'otp_email' && (
+          <div>
             <button
-              onClick={() => setScreen('enter_email')}
-              style={{ fontSize: 13, fontWeight: 600, color: '#64748B',
-                background: 'none', border: 'none', cursor: 'pointer', padding: '6px 0' }}>
-              Sign in →
-            </button>
-          )}
-        </nav>
-
-        {/* ══════════════════════════════════════
-            SCREEN: HERO
-        ══════════════════════════════════════ */}
-        {screen === 'hero' && (
-          <div style={{ paddingTop: 48, paddingBottom: 48 }}>
-
-            {/* Eyebrow */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
-              <div style={{ width: 6, height: 6, borderRadius: '50%',
-                background: '#A3E635', boxShadow: '0 0 8px #A3E635' }} />
-              <span style={{ fontSize: 11, letterSpacing: '0.25em', textTransform: 'uppercase',
-                color: '#64748B', fontWeight: 600 }}>
-                Now in early access
-              </span>
-            </div>
-
-            {/* Headline */}
-            <h1 style={{
-              fontSize: 'clamp(40px, 11vw, 52px)',
-              fontWeight: 900,
-              lineHeight: 1.05,
-              letterSpacing: '-0.03em',
-              margin: '0 0 20px',
-              color: '#F1F5F9',
-            }}>
-              Your life.<br />
-              <span style={{
-                background: 'linear-gradient(90deg, #A3E635 0%, #7DF4B0 100%)',
-                WebkitBackgroundClip: 'text',
-                WebkitTextFillColor: 'transparent',
-              }}>
-                Levelled up.
-              </span>
-            </h1>
-
-            <p style={{ fontSize: 16, lineHeight: 1.65, color: '#64748B',
-              margin: '0 0 36px', maxWidth: 340 }}>
-              Pick the stats that matter. Let a small group of trusted people assign
-              you real challenges — and hold you to them.
-            </p>
-
-            {/* Live stat preview card */}
-            <div style={{
-              background: 'rgba(27,31,59,0.6)',
-              border: '1px solid rgba(45,49,88,0.8)',
-              borderRadius: 20,
-              padding: '20px 20px 16px',
-              marginBottom: 32,
-              backdropFilter: 'blur(12px)',
-              WebkitBackdropFilter: 'blur(12px)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                marginBottom: 16 }}>
-                <div>
-                  <p style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
-                    color: '#64748B', margin: 0 }}>Your Build</p>
-                  <p style={{ fontSize: 15, fontWeight: 800, color: '#F1F5F9',
-                    margin: '2px 0 0', fontFamily: 'monospace' }}>@yourname</p>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <p style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
-                    color: '#64748B', margin: 0 }}>Council</p>
-                  <p style={{ fontSize: 15, fontWeight: 800, color: '#A3E635',
-                    margin: '2px 0 0', fontFamily: 'monospace' }}>3 / 5</p>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {STATS.map((stat, i) => (
-                  <div key={stat.name}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between',
-                      alignItems: 'center', marginBottom: 5 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontSize: 13 }}>{stat.icon}</span>
-                        <span style={{ fontSize: 12, fontWeight: 700, color: '#CBD5E1' }}>
-                          {stat.name}
-                        </span>
-                      </div>
-                      <span style={{ fontSize: 12, fontWeight: 700, fontFamily: 'monospace',
-                        color: '#A3E635' }}>
-                        {stat.value}
-                      </span>
-                    </div>
-                    <div style={{ height: 4, background: '#0F1117', borderRadius: 4, overflow: 'hidden' }}>
-                      <div style={{
-                        height: '100%',
-                        width: `${stat.value}%`,
-                        background: i % 2 === 0
-                          ? 'linear-gradient(90deg, #7C3AED, #A855F7)'
-                          : 'linear-gradient(90deg, #65A30D, #A3E635)',
-                        borderRadius: 4,
-                        animation: `growBar${i} 1.2s ease-out ${i * 0.15}s both`,
-                      }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* CTA */}
-            <button
-              onClick={() => setScreen('enter_email')}
-              style={{
-                width: '100%', padding: '18px 24px',
-                background: 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
-                color: '#F1F5F9', border: 'none', borderRadius: 16,
-                fontSize: 16, fontWeight: 800, letterSpacing: '0.02em',
-                cursor: 'pointer',
-                boxShadow: '0 8px 32px rgba(124,58,237,0.35)',
-                marginBottom: 12,
-                transition: 'transform 0.15s, box-shadow 0.15s',
-              }}
-              onMouseDown={e => {
-                const el = e.currentTarget
-                el.style.transform = 'scale(0.97)'
-                el.style.boxShadow = '0 4px 16px rgba(124,58,237,0.25)'
-              }}
-              onMouseUp={e => {
-                const el = e.currentTarget
-                el.style.transform = 'scale(1)'
-                el.style.boxShadow = '0 8px 32px rgba(124,58,237,0.35)'
-              }}>
-              Begin Your Build →
-            </button>
-
-            <p style={{ fontSize: 12, textAlign: 'center', color: '#3D4466', margin: 0 }}>
-              No password. No app download. Just your email.
-            </p>
-
-            {/* Feature pills */}
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap',
-              marginTop: 32, justifyContent: 'center' }}>
-              {['Weekly challenges', 'Council reviews', 'Stat tracking', 'Streak system'].map(f => (
-                <span key={f} style={{
-                  fontSize: 11, fontWeight: 600, padding: '5px 10px',
-                  borderRadius: 20, border: '1px solid #2D3158',
-                  color: '#64748B', background: 'rgba(27,31,59,0.4)',
-                }}>
-                  {f}
-                </span>
-              ))}
-            </div>
-
-          </div>
-        )}
-
-        {/* ══════════════════════════════════════
-            SCREEN: ENTER EMAIL
-        ══════════════════════════════════════ */}
-        {screen === 'enter_email' && (
-          <div style={{ paddingTop: 48, paddingBottom: 48 }}>
-
-            <button
-              onClick={() => { setScreen('hero'); setError(''); setEmail('') }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer',
-                color: '#64748B', fontSize: 13, padding: '0 0 32px',
-                display: 'flex', alignItems: 'center', gap: 6 }}>
+              onClick={() => { setLoginMode('password'); setError('') }}
+              style={S.backBtn}>
               ← Back
             </button>
-
-            <h2 style={{ fontSize: 32, fontWeight: 900, letterSpacing: '-0.03em',
-              margin: '0 0 8px', lineHeight: 1.1, color: '#F1F5F9' }}>
-              Enter your<br />
-              <span style={{ color: '#A3E635' }}>email.</span>
+            <h2 style={S.heading}>
+              Sign in with a<br />
+              <span style={{ color: '#7C3AED' }}>code.</span>
             </h2>
-            <p style={{ fontSize: 14, color: '#64748B', margin: '0 0 36px',
-              lineHeight: 1.6 }}>
-              We'll send a 6-digit code. No password, no magic links,
-              no new tabs.
+            <p style={S.subtext}>
+              We'll send a 6-digit code — no new tabs, no magic links.
             </p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <input
-                type="email"
-                value={email}
-                autoFocus
-                onChange={e => { setEmail(e.target.value); setError('') }}
-                onKeyDown={e => e.key === 'Enter' && handleSendCode()}
-                placeholder="you@example.com"
-                autoComplete="email"
-                style={{
-                  width: '100%', padding: '16px 18px',
-                  background: 'rgba(27,31,59,0.8)',
-                  border: `1px solid ${error ? '#EF4444' : '#2D3158'}`,
-                  borderRadius: 14, color: '#F1F5F9', fontSize: 16,
-                  outline: 'none', boxSizing: 'border-box',
-                  fontFamily: 'inherit',
-                  transition: 'border-color 0.2s',
-                }}
-                onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
-                onBlur={e => { e.currentTarget.style.borderColor = error ? '#EF4444' : '#2D3158' }}
-              />
+            <label style={S.label}>Email</label>
+            <input
+              type="email"
+              value={otpEmail}
+              autoFocus
+              autoComplete="email"
+              onChange={e => { setOtpEmail(e.target.value); setError('') }}
+              onKeyDown={e => e.key === 'Enter' && handleSendOtp()}
+              onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+              onBlur={e => { e.currentTarget.style.borderColor = error ? '#EF4444' : '#DDD6CE' }}
+              placeholder="you@example.com"
+              style={S.input(!!error)}
+            />
 
-              {error && (
-                <p style={{ fontSize: 13, color: '#EF4444', margin: 0,
-                  padding: '10px 14px', background: 'rgba(239,68,68,0.08)',
-                  borderRadius: 10, border: '1px solid rgba(239,68,68,0.2)' }}>
-                  {error}
-                </p>
-              )}
+            {error && <p style={S.error}>{error}</p>}
 
-              <button
-                onClick={handleSendCode}
-                disabled={submitting || !email.trim()}
-                style={{
-                  width: '100%', padding: '16px 24px',
-                  background: submitting || !email.trim()
-                    ? 'rgba(124,58,237,0.3)'
-                    : 'linear-gradient(135deg, #7C3AED 0%, #6D28D9 100%)',
-                  color: '#F1F5F9', border: 'none', borderRadius: 14,
-                  fontSize: 15, fontWeight: 700, cursor: submitting || !email.trim()
-                    ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s',
-                  boxShadow: submitting || !email.trim()
-                    ? 'none' : '0 6px 24px rgba(124,58,237,0.3)',
-                }}>
-                {submitting ? 'Sending code...' : 'Send Code →'}
-              </button>
-            </div>
-
-            <p style={{ fontSize: 12, color: '#3D4466', textAlign: 'center',
-              marginTop: 24, lineHeight: 1.6 }}>
-              New here? We'll create your account automatically.
-            </p>
-
+            <button
+              onClick={handleSendOtp}
+              disabled={!otpEmail.trim() || loading}
+              style={S.primaryBtn(!otpEmail.trim() || loading)}>
+              {loading ? 'Sending...' : 'Send code →'}
+            </button>
           </div>
         )}
 
-        {/* ══════════════════════════════════════
-            SCREEN: ENTER CODE
-        ══════════════════════════════════════ */}
-        {screen === 'enter_code' && (
-          <div style={{ paddingTop: 48, paddingBottom: 48 }}>
-
+        {/* ══════════════════════════════
+            OTP: ENTER CODE
+        ══════════════════════════════ */}
+        {loginMode === 'otp_code' && (
+          <div>
             <button
-              onClick={() => { setScreen('enter_email'); setError(''); setCodeInputs(['','','','','','']) }}
-              style={{ background: 'none', border: 'none', cursor: 'pointer',
-                color: '#64748B', fontSize: 13, padding: '0 0 32px',
-                display: 'flex', alignItems: 'center', gap: 6 }}>
+              onClick={() => {
+                setLoginMode('otp_email')
+                setCodeInputs(['', '', '', '', '', ''])
+                setError('')
+              }}
+              style={S.backBtn}>
               ← Back
             </button>
+            <h2 style={S.heading}>
+              Enter your<br />
+              <span style={{ color: '#7C3AED' }}>6-digit code.</span>
+            </h2>
+            <p style={S.subtext}>Sent to {otpEmail}</p>
 
-            <div style={{ marginBottom: 32 }}>
-              <p style={{ fontSize: 11, letterSpacing: '0.2em', textTransform: 'uppercase',
-                color: '#7C3AED', margin: '0 0 8px', fontWeight: 700 }}>
-                Code sent
-              </p>
-              <h2 style={{ fontSize: 30, fontWeight: 900, letterSpacing: '-0.03em',
-                margin: '0 0 8px', lineHeight: 1.1, color: '#F1F5F9' }}>
-                Check your<br />
-                <span style={{ color: '#A3E635' }}>inbox.</span>
-              </h2>
-              <p style={{ fontSize: 14, color: '#64748B', margin: 0, lineHeight: 1.6 }}>
-                We sent a 6-digit code to<br />
-                <span style={{ color: '#F1F5F9', fontWeight: 600 }}>{email}</span>
-              </p>
-            </div>
-
-            {/* 6-digit code inputs */}
-            <div style={{ display: 'flex', gap: 10, marginBottom: 16, justifyContent: 'center' }}
-              onPaste={handleCodePaste}>
-              {codeInputs.map((digit, i) => (
+            {/* Code boxes */}
+            <div style={{ display: 'flex', gap: 7, marginBottom: 6 }}>
+              {codeInputs.map((val, i) => (
                 <input
                   key={i}
-                  id={`code-${i}`}
+                  id={`otp-${i}`}
                   type="text"
                   inputMode="numeric"
                   maxLength={1}
-                  value={digit}
+                  value={val}
                   autoFocus={i === 0}
                   onChange={e => handleCodeInput(i, e.target.value)}
                   onKeyDown={e => handleCodeKeyDown(i, e)}
+                  onPaste={i === 0 ? handleCodePaste : undefined}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = error ? '#EF4444' : '#DDD6CE' }}
                   style={{
-                    width: 48, height: 60,
+                    flex: 1,
                     textAlign: 'center',
-                    fontSize: 24, fontWeight: 800,
-                    fontFamily: 'monospace',
-                    background: digit ? 'rgba(124,58,237,0.15)' : 'rgba(27,31,59,0.8)',
-                    border: `2px solid ${error ? '#EF4444' : digit ? '#7C3AED' : '#2D3158'}`,
+                    fontSize: 22,
+                    fontWeight: 700,
+                    padding: '12px 0',
+                    border: `1.5px solid ${error ? '#EF4444' : '#DDD6CE'}`,
                     borderRadius: 12,
-                    color: '#F1F5F9',
                     outline: 'none',
-                    caretColor: '#7C3AED',
-                    transition: 'all 0.15s',
-                    boxSizing: 'border-box',
-                  }}
-                  onFocus={e => {
-                    if (!error) e.currentTarget.style.borderColor = '#7C3AED'
-                  }}
-                  onBlur={e => {
-                    if (!error && !e.currentTarget.value)
-                      e.currentTarget.style.borderColor = '#2D3158'
+                    color: '#1C1410',
+                    background: '#FAF7F3',
+                    fontFamily: 'monospace',
+                    transition: 'border-color 0.15s',
                   }}
                 />
               ))}
             </div>
 
-            {error && (
-              <p style={{ fontSize: 13, color: '#EF4444', margin: '0 0 12px',
-                padding: '10px 14px', background: 'rgba(239,68,68,0.08)',
-                borderRadius: 10, border: '1px solid rgba(239,68,68,0.2)',
-                textAlign: 'center' }}>
-                {error}
-              </p>
-            )}
+            {error && <p style={S.error}>{error}</p>}
 
             <button
               id="verify-btn"
-              onClick={handleVerifyCode}
-              disabled={submitting || codeInputs.join('').length < 6}
-              style={{
-                width: '100%', padding: '16px 24px',
-                background: submitting || codeInputs.join('').length < 6
-                  ? 'rgba(163,230,53,0.2)'
-                  : 'linear-gradient(135deg, #84CC16 0%, #A3E635 100%)',
-                color: submitting || codeInputs.join('').length < 6 ? '#4B5563' : '#0F1117',
-                border: 'none', borderRadius: 14,
-                fontSize: 15, fontWeight: 800,
-                cursor: submitting || codeInputs.join('').length < 6
-                  ? 'not-allowed' : 'pointer',
-                transition: 'all 0.2s',
-                boxShadow: codeInputs.join('').length < 6
-                  ? 'none' : '0 6px 24px rgba(163,230,53,0.25)',
-              }}>
-              {submitting ? 'Verifying...' : 'Enter Statosphere →'}
+              onClick={handleVerifyOtp}
+              disabled={codeInputs.join('').length < 6 || loading}
+              style={S.primaryBtn(codeInputs.join('').length < 6 || loading)}>
+              {loading ? 'Verifying...' : 'Sign in →'}
             </button>
 
-            <div style={{ textAlign: 'center', marginTop: 20 }}>
-              <button
-                onClick={() => { setCodeInputs(['','','','','','']); handleSendCode() }}
-                style={{ background: 'none', border: 'none', cursor: 'pointer',
-                  fontSize: 13, color: '#64748B', textDecoration: 'underline',
-                  textDecorationColor: 'transparent',
-                  transition: 'color 0.2s' }}
-                onMouseEnter={e => e.currentTarget.style.color = '#94A3B8'}
-                onMouseLeave={e => e.currentTarget.style.color = '#64748B'}>
-                Didn't get it? Resend code
-              </button>
-            </div>
-
+            <button
+              onClick={() => {
+                setCodeInputs(['', '', '', '', '', ''])
+                handleSendOtp()
+              }}
+              style={S.ghostBtn}
+              onMouseEnter={e => { e.currentTarget.style.color = '#6B5E54' }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#9B8F85' }}>
+              Resend code
+            </button>
           </div>
         )}
 
+        {/* ══════════════════════════════
+            PASSWORD FLOW (Login + Signup)
+        ══════════════════════════════ */}
+        {loginMode === 'password' && (
+          <>
+            {/* Tab switcher */}
+            <div style={{
+              display: 'flex',
+              borderBottom: '1.5px solid #EDE8E0',
+              marginBottom: 28,
+            }}>
+              {(['login', 'signup'] as Tab[]).map(t => (
+                <button
+                  key={t}
+                  onClick={() => handleTabChange(t)}
+                  style={{
+                    flex: 1,
+                    padding: '10px 0',
+                    border: 'none',
+                    background: 'none',
+                    cursor: 'pointer',
+                    fontSize: 14,
+                    fontWeight: tab === t ? 700 : 500,
+                    color: tab === t ? '#1C1410' : '#A89A90',
+                    borderBottom: tab === t
+                      ? '2.5px solid #7C3AED'
+                      : '2.5px solid transparent',
+                    marginBottom: -1.5,
+                    transition: 'all 0.15s',
+                    fontFamily: 'inherit',
+                  }}>
+                  {t === 'login' ? 'Sign in' : 'Create account'}
+                </button>
+              ))}
+            </div>
+
+            {/* ── LOGIN TAB ── */}
+            {tab === 'login' && (
+              <>
+                <label style={S.label}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  autoFocus
+                  autoComplete="email"
+                  onChange={e => { setEmail(e.target.value); setError('') }}
+                  onKeyDown={e => e.key === 'Enter' && document.getElementById('login-pw')?.focus()}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = '#DDD6CE' }}
+                  placeholder="you@example.com"
+                  style={{ ...S.input(false), marginBottom: 18 }}
+                />
+
+                <label style={S.label}>Password</label>
+                <input
+                  id="login-pw"
+                  type="password"
+                  value={password}
+                  autoComplete="current-password"
+                  onChange={e => { setPassword(e.target.value); setError('') }}
+                  onKeyDown={e => e.key === 'Enter' && handleLogin()}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = error ? '#EF4444' : '#DDD6CE' }}
+                  placeholder="••••••••"
+                  style={S.input(!!error)}
+                />
+
+                {error && <p style={S.error}>{error}</p>}
+
+                <button
+                  onClick={handleLogin}
+                  disabled={!email.trim() || !password || loading}
+                  style={S.primaryBtn(!email.trim() || !password || loading)}>
+                  {loading ? 'Signing in...' : 'Sign in →'}
+                </button>
+
+                <button
+                  onClick={() => {
+                    // Pre-fill OTP email from whatever they typed
+                    setOtpEmail(email)
+                    setLoginMode('otp_email')
+                    setError('')
+                  }}
+                  style={S.ghostBtn}
+                  onMouseEnter={e => { e.currentTarget.style.color = '#6B5E54' }}
+                  onMouseLeave={e => { e.currentTarget.style.color = '#9B8F85' }}>
+                  Sign in with a code instead
+                </button>
+              </>
+            )}
+
+            {/* ── SIGNUP TAB ── */}
+            {tab === 'signup' && (
+              <>
+                <label style={S.label}>Email</label>
+                <input
+                  type="email"
+                  value={email}
+                  autoFocus
+                  autoComplete="email"
+                  onChange={e => { setEmail(e.target.value); setError(''); setSuccessMsg('') }}
+                  onKeyDown={e => e.key === 'Enter' && document.getElementById('signup-pw')?.focus()}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = '#DDD6CE' }}
+                  placeholder="you@example.com"
+                  style={{ ...S.input(false), marginBottom: 18 }}
+                />
+
+                <label style={S.label}>Password</label>
+                <input
+                  id="signup-pw"
+                  type="password"
+                  value={password}
+                  autoComplete="new-password"
+                  onChange={e => { setPassword(e.target.value); setError('') }}
+                  onKeyDown={e => e.key === 'Enter' && handleSignup()}
+                  onFocus={e => { e.currentTarget.style.borderColor = '#7C3AED' }}
+                  onBlur={e => { e.currentTarget.style.borderColor = error ? '#EF4444' : '#DDD6CE' }}
+                  placeholder="At least 6 characters"
+                  style={S.input(!!error)}
+                />
+
+                {error && <p style={S.error}>{error}</p>}
+                {successMsg && <p style={S.success}>{successMsg}</p>}
+
+                <button
+                  onClick={handleSignup}
+                  disabled={!email.trim() || !password || loading}
+                  style={S.primaryBtn(!email.trim() || !password || loading)}>
+                  {loading ? 'Creating account...' : 'Create account →'}
+                </button>
+
+                <p style={{
+                  fontSize: 11,
+                  color: '#B5A99F',
+                  textAlign: 'center',
+                  margin: '16px 0 0',
+                  lineHeight: 1.5,
+                }}>
+                  Your build, held accountable by people who actually know you.
+                </p>
+              </>
+            )}
+          </>
+        )}
       </div>
 
-      {/* Bar grow animations */}
+      {/* ── Stat pills ── */}
+      <div style={{
+        display: 'flex',
+        gap: 7,
+        marginTop: 22,
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        position: 'relative',
+        zIndex: 1,
+      }}>
+        {['💪 Strength', '⚔️ Discipline', '✨ Charisma', '🧠 Intelligence'].map(s => (
+          <span key={s} style={{
+            fontSize: 11,
+            fontWeight: 600,
+            padding: '5px 11px',
+            borderRadius: 20,
+            background: 'rgba(255,255,255,0.55)',
+            color: '#A89A90',
+            border: '1px solid rgba(0,0,0,0.06)',
+          }}>
+            {s}
+          </span>
+        ))}
+      </div>
+
+      {/* ── Font import + global resets ── */}
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800;900&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600;12..96,700;12..96,800&family=DM+Sans:wght@400;500;600;700&display=swap');
 
-        @keyframes growBar0 { from { width: 0 } to { width: 74% } }
-        @keyframes growBar1 { from { width: 0 } to { width: 61% } }
-        @keyframes growBar2 { from { width: 0 } to { width: 88% } }
-        @keyframes growBar3 { from { width: 0 } to { width: 53% } }
-
-        * { -webkit-tap-highlight-color: transparent; }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
         input:-webkit-autofill,
         input:-webkit-autofill:focus {
-          -webkit-box-shadow: 0 0 0 1000px #1B1F3B inset;
-          -webkit-text-fill-color: #F1F5F9;
+          -webkit-box-shadow: 0 0 0 1000px #FAF7F3 inset !important;
+          -webkit-text-fill-color: #1C1410 !important;
         }
       `}</style>
-
     </main>
   )
 }
