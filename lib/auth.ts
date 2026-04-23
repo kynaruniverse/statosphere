@@ -1,14 +1,11 @@
-import { createBrowserClient } from '@supabase/ssr'
+import { supabase } from '@/lib/supabase'
 import { useEffect, useState } from 'react'
-
-const supabase = createBrowserClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
+import type { User } from '@supabase/supabase-js'
+import type { Profile } from '@/lib/types'
 
 export function useAuth() {
-  const [user, setUser] = useState<any>(null)
-  const [profile, setProfile] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -33,6 +30,15 @@ export function useAuth() {
     }
 
     init()
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setUser(session?.user ?? null)
+        if (!session?.user) setProfile(null)
+      }
+    )
+
+    return () => subscription.unsubscribe()
   }, [])
 
   return {

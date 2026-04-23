@@ -1,32 +1,33 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { createSupabaseServerClient, createSupabaseServiceClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-export async function POST(request: Request) {
-  const cookieStore = await cookies()
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+export async function POST() {
+  const supabase = await createSupabaseServerClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  // Get user profile
+  // Rate limit: one nudge per 24 hours
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+  const { data: recentNudge } = await supabase
+    .from('activity_log')
+    .select('id')
+    .eq('user_id', user.id)
+    .eq('type', 'council_nudge')
+    .gte('created_at', oneDayAgo)
+    .limit(1)
+    .single()
+
+  if (recentNudge) {
+    return NextResponse.json(
+      { error: 'You can only nudge your Council once every 24 hours.' },
+      { status: 429 }
+    )
+  }
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('full_name, username')
@@ -35,7 +36,6 @@ export async function POST(request: Request) {
 
   const userName = profile?.full_name || profile?.username || 'Someone'
 
-  // Get user's council and active members
   const { data: council } = await supabase
     .from('councils')
     .select('id')
@@ -46,7 +46,7 @@ export async function POST(request: Request) {
 
   const { data: members } = await supabase
     .from('council_members')
-    .select('member_id, profiles(full_name, username)')
+    .select('member_id')
     .eq('council_id', council.id)
     .eq('status', 'active')
 
@@ -54,10 +54,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'No active members' }, { status: 400 })
   }
 
-  // Get member email addresses from auth
-  const nudgePromises = members.map(async (member: any) => {
-    const { data: authUser } = await supabase.auth.admin.getUserById(member.member_id)
-    const memberEmail = authUser?.user?.email
+  // Use service client to get email addresses
+  const serviceClient = createSupabaseServiceClient()
+
+  const nudgePromises = members.map(async (member) => {
+    if (!member.member_id) return
+    const { data: authUserData } = await serviceClient.auth.admin.getUserById(
+      member.member_id
+    )
+    const memberEmail = authUserData?.user?.email
     if (!memberEmail) return
 
     await resend.emails.send({
@@ -91,5 +96,14 @@ export async function POST(request: Request) {
   })
 
   await Promise.allSettled(nudgePromises)
+
+  // Log the nudge to enforce rate limiting
+  await supabase.from('activity_log').insert({
+    user_id: user.id,
+    type: 'council_nudge',
+    title: 'Nudged council',
+    meta: { member_count: members.length },
+  })
+
   return NextResponse.json({ success: true })
 }

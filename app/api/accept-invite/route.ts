@@ -1,44 +1,27 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 
 export async function POST(request: Request) {
-  const cookieStore = await cookies()
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+  const supabase = await createSupabaseServerClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { token } = await request.json()
+  const body = await request.json()
+  const { token } = body
   if (!token) return NextResponse.json({ error: 'Token required' }, { status: 400 })
 
-  // Find the invite
   const { data: invite } = await supabase
     .from('council_members')
     .select('id, council_id, status, invite_email')
     .eq('invite_token', token)
     .single()
 
-  if (!invite) return NextResponse.json({ error: 'Invalid invite' }, { status: 400 })
+  if (!invite) return NextResponse.json({ error: 'Invalid or expired invite' }, { status: 400 })
   if (invite.status === 'active') return NextResponse.json({ error: 'Already accepted' }, { status: 400 })
 
-  // Security check — verify the logged in user's email matches the invite
-  const { data: authUser } = await supabase.auth.getUser()
-  const userEmail = authUser.user?.email?.toLowerCase()
+  // Verify the logged-in user's email matches the invite
+  const userEmail = user.email?.toLowerCase()
   const inviteEmail = invite.invite_email?.toLowerCase()
 
   if (inviteEmail && userEmail && userEmail !== inviteEmail) {
@@ -48,7 +31,17 @@ export async function POST(request: Request) {
     )
   }
 
-  // Activate the member
+  // Check council is not full (max 5 active members)
+  const { count } = await supabase
+    .from('council_members')
+    .select('id', { count: 'exact' })
+    .eq('council_id', invite.council_id)
+    .eq('status', 'active')
+
+  if ((count ?? 0) >= 5) {
+    return NextResponse.json({ error: 'This Council is full.' }, { status: 400 })
+  }
+
   const { error: updateError } = await supabase
     .from('council_members')
     .update({

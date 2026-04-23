@@ -1,32 +1,19 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { createSupabaseServerClient, createSupabaseServiceClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
 export async function POST(request: Request) {
-  const cookieStore = await cookies()
-
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
-
   const { submission_id } = await request.json()
-  if (!submission_id) return NextResponse.json({ error: 'Missing submission_id' }, { status: 400 })
+  if (!submission_id) {
+    return NextResponse.json({ error: 'Missing submission_id' }, { status: 400 })
+  }
 
-  const { data: submission } = await supabase
+  // Use service client to look up auth user emails
+  const serviceClient = createSupabaseServiceClient()
+
+  const { data: submission } = await serviceClient
     .from('submissions')
     .select(`
       user_id, status,
@@ -36,11 +23,18 @@ export async function POST(request: Request) {
     .eq('id', submission_id)
     .single()
 
-  if (!submission) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!submission) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
-  const { data: authUser } = await supabase.auth.admin.getUserById(submission.user_id)
-  const userEmail = authUser?.user?.email
-  if (!userEmail) return NextResponse.json({ error: 'No email' }, { status: 400 })
+  // Get user email via admin API (service role required)
+  const { data: authUserData } = await serviceClient.auth.admin.getUserById(
+    submission.user_id
+  )
+  const userEmail = authUserData?.user?.email
+  if (!userEmail) {
+    return NextResponse.json({ error: 'No email for user' }, { status: 400 })
+  }
 
   const task = (submission as any).tasks
   const feedback = (submission as any).feedback?.[0]
@@ -48,10 +42,18 @@ export async function POST(request: Request) {
   const decision = submission.status
   const isApproved = decision === 'approved'
 
-  const decisionLabel = isApproved ? '✓ Approved' : decision === 'rejected' ? '✗ Rejected' : '→ Needs More'
-  const decisionColor = isApproved ? '#A3E635' : decision === 'rejected' ? '#EF4444' : '#F59E0B'
+  const decisionLabel = isApproved
+    ? '✓ Approved'
+    : decision === 'rejected'
+      ? '✗ Rejected'
+      : '→ Needs More'
+  const decisionColor = isApproved
+    ? '#A3E635'
+    : decision === 'rejected'
+      ? '#EF4444'
+      : '#F59E0B'
 
-  await resend.emails.send({
+  const { error: emailError } = await resend.emails.send({
     from: 'Statosphere <onboarding@resend.dev>',
     to: userEmail,
     subject: `Your Council reviewed your submission — Statosphere`,
@@ -65,9 +67,9 @@ export async function POST(request: Request) {
         </h1>
         <div style="background:#1B1F3B;border-radius:12px;padding:20px;margin-bottom:24px;">
           <p style="color:#64748B;font-size:12px;margin-bottom:8px;">TASK</p>
-          <p style="font-weight:700;margin-bottom:12px;">${task?.title}</p>
+          <p style="font-weight:700;margin-bottom:12px;">${task?.title ?? 'Unknown task'}</p>
           <p style="color:#64748B;font-size:12px;margin-bottom:8px;">STAT</p>
-          <p style="margin-bottom:12px;">${stat?.icon} ${stat?.name}</p>
+          <p style="margin-bottom:12px;">${stat?.icon ?? ''} ${stat?.name ?? 'Unknown'}</p>
           <p style="color:#64748B;font-size:12px;margin-bottom:8px;">DECISION</p>
           <p style="font-weight:900;color:${decisionColor};">${decisionLabel}</p>
           ${feedback?.comment ? `
@@ -94,6 +96,11 @@ export async function POST(request: Request) {
       </div>
     `,
   })
+
+  if (emailError) {
+    console.error('Failed to send notification email:', emailError)
+    // Don't fail the request — notification is non-critical
+  }
 
   return NextResponse.json({ success: true })
 }

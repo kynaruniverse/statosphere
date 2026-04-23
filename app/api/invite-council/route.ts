@@ -1,33 +1,30 @@
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { NextResponse } from 'next/server'
 import { Resend } from 'resend'
 
 const resend = new Resend(process.env.RESEND_API_KEY)
 
-export async function POST(request: Request) {
-  const cookieStore = await cookies()
+function isValidEmail(email: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
+}
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
-          )
-        },
-      },
-    }
-  )
+export async function POST(request: Request) {
+  const supabase = await createSupabaseServerClient()
 
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { email } = await request.json()
-  if (!email) return NextResponse.json({ error: 'Email required' }, { status: 400 })
+  const body = await request.json()
+  const { email } = body
+
+  if (!email || !isValidEmail(email)) {
+    return NextResponse.json({ error: 'Valid email required' }, { status: 400 })
+  }
+
+  // Prevent inviting yourself
+  if (email.toLowerCase() === user.email?.toLowerCase()) {
+    return NextResponse.json({ error: 'You cannot invite yourself' }, { status: 400 })
+  }
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -43,28 +40,48 @@ export async function POST(request: Request) {
 
   if (!council) return NextResponse.json({ error: 'No council found' }, { status: 400 })
 
+  // Check council is not full
+  const { count: activeCount } = await supabase
+    .from('council_members')
+    .select('id', { count: 'exact' })
+    .eq('council_id', council.id)
+    .eq('status', 'active')
+
+  if ((activeCount ?? 0) >= 5) {
+    return NextResponse.json({ error: 'Your Council is full (max 5 members)' }, { status: 400 })
+  }
+
   const { data: existing } = await supabase
     .from('council_members')
     .select('id, status')
     .eq('council_id', council.id)
     .eq('invite_email', email.toLowerCase())
-    .single()
+    .maybeSingle()
 
-  if (existing) return NextResponse.json({ error: 'Already invited' }, { status: 400 })
+  if (existing) {
+    return NextResponse.json(
+      { error: existing.status === 'active' ? 'This person is already on your Council' : 'Already invited' },
+      { status: 400 }
+    )
+  }
 
   const token = crypto.randomUUID()
 
-  await supabase.from('council_members').insert({
+  const { error: insertError } = await supabase.from('council_members').insert({
     council_id: council.id,
     invite_email: email.toLowerCase(),
     invite_token: token,
     status: 'pending',
   })
 
+  if (insertError) {
+    return NextResponse.json({ error: 'Failed to create invite' }, { status: 500 })
+  }
+
   const inviterName = profile?.full_name || profile?.username || 'Someone'
   const inviteUrl = `${process.env.NEXT_PUBLIC_SITE_URL}/join?token=${token}`
 
-  await resend.emails.send({
+  const { error: emailError } = await resend.emails.send({
     from: 'Statosphere <onboarding@resend.dev>',
     to: email,
     subject: `${inviterName} wants you on their Council — Statosphere`,
@@ -97,6 +114,11 @@ export async function POST(request: Request) {
       </div>
     `,
   })
+
+  if (emailError) {
+    console.error('Failed to send invite email:', emailError)
+    // Still return success — the invite row was created
+  }
 
   return NextResponse.json({ success: true })
 }

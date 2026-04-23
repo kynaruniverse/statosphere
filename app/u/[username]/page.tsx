@@ -1,11 +1,6 @@
-import { createClient } from '@supabase/supabase-js'
+import { createSupabaseServerClient } from '@/lib/supabase-server'
 import { notFound } from 'next/navigation'
 import PublicProfileClient from './PublicProfileClient'
-
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-)
 
 export async function generateMetadata({
   params,
@@ -13,6 +8,8 @@ export async function generateMetadata({
   params: Promise<{ username: string }>
 }) {
   const { username } = await params
+  const supabase = await createSupabaseServerClient()
+
   const { data: profile } = await supabase
     .from('profiles')
     .select('full_name, username, becoming_statement')
@@ -35,6 +32,7 @@ export default async function PublicProfilePage({
   params: Promise<{ username: string }>
 }) {
   const { username } = await params
+  const supabase = await createSupabaseServerClient()
 
   const { data: profile } = await supabase
     .from('profiles')
@@ -45,26 +43,20 @@ export default async function PublicProfilePage({
 
   if (!profile) notFound()
 
-  const { data: userStats } = await supabase
-    .from('user_stats')
-    .select('*, stat_categories(*)')
-    .eq('user_id', profile.id)
-
-  const { data: streaks } = await supabase
-    .from('streaks')
-    .select('*')
-    .eq('user_id', profile.id)
-
-  const { data: council } = await supabase
-    .from('councils')
-    .select('id')
-    .eq('owner_id', profile.id)
-    .single()
+  const [
+    { data: userStats },
+    { data: streaks },
+    { data: council },
+  ] = await Promise.all([
+    supabase.from('user_stats').select('*, stat_categories(*)').eq('user_id', profile.id),
+    supabase.from('streaks').select('*').eq('user_id', profile.id),
+    supabase.from('councils').select('id').eq('owner_id', profile.id).maybeSingle(),
+  ])
 
   const { count: councilSize } = await supabase
     .from('council_members')
     .select('id', { count: 'exact' })
-    .eq('council_id', council?.id || '')
+    .eq('council_id', council?.id ?? '')
     .eq('status', 'active')
 
   const { count: approvedCount } = await supabase

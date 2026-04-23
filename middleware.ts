@@ -22,30 +22,31 @@ export async function middleware(req: NextRequest) {
     }
   )
 
-  // Only check session if route requires it
   const path = req.nextUrl.pathname
 
-  const isAuthPage = path.startsWith('/login') || path.startsWith('/signup')
+  const isAuthPage = path === '/login' || path === '/signup'
   const isProtected =
     path.startsWith('/dashboard') ||
     path.startsWith('/review') ||
     path.startsWith('/tasks') ||
     path.startsWith('/council') ||
-    path.startsWith('/onboarding')
+    path.startsWith('/onboarding') ||
+    path.startsWith('/activity') ||
+    path.startsWith('/settings') ||
+    path.startsWith('/requests')
 
-  let user = null
-
-  if (isProtected || isAuthPage) {
-    const { data } = await supabase.auth.getUser()
-    user = data.user
+  if (!isProtected && !isAuthPage) {
+    return res
   }
 
-  // 🚫 Not logged in → block protected routes
+  const { data: { user } } = await supabase.auth.getUser()
+
   if (!user && isProtected) {
-    return NextResponse.redirect(new URL('/login', req.url))
+    const loginUrl = new URL('/login', req.url)
+    loginUrl.searchParams.set('next', path)
+    return NextResponse.redirect(loginUrl)
   }
 
-  // 🚫 Logged in → block auth pages
   if (user && isAuthPage) {
     return NextResponse.redirect(new URL('/dashboard', req.url))
   }
@@ -60,6 +61,9 @@ export const config = {
     '/tasks/:path*',
     '/council/:path*',
     '/onboarding/:path*',
+    '/activity/:path*',
+    '/settings/:path*',
+    '/requests/:path*',
     '/login',
     '/signup',
   ],

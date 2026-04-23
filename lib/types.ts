@@ -4,7 +4,11 @@ export type Profile = {
   full_name: string | null
   becoming_statement: string | null
   avatar_url: string | null
+  bio: string | null
+  location: string | null
   onboarding_complete: boolean
+  profile_public: boolean
+  council_requests_open: boolean
   email_notifications: boolean
   created_at: string
   updated_at: string
@@ -25,7 +29,6 @@ export type UserStat = {
   stat_categories?: StatCategory
 }
 
-// ✅ NEW: Pending stat changes (for cycle-based updates)
 export type PendingStatChange = {
   id: string
   user_id: string
@@ -47,7 +50,6 @@ export type Streak = {
   stat_categories?: StatCategory
 }
 
-// ✅ NEW: Weekly cycle system
 export type WeeklyCycle = {
   id: string
   user_id: string
@@ -66,23 +68,25 @@ export type Council = {
 export type CouncilMember = {
   id: string
   council_id: string
-  member_id: string
-  invite_email?: string
-  invite_token?: string
+  member_id: string | null
+  invite_email?: string | null
+  invite_token?: string | null
   status: 'pending' | 'active' | 'removed'
   invited_at: string
   joined_at: string | null
   profiles?: Profile
 }
 
-// ✅ NEW: Track council engagement/activity
-export type CouncilActivity = {
+export type CouncilRequest = {
   id: string
-  council_member_id: string
-  last_active_at: string
+  requester_id: string
+  target_user_id: string
+  message: string | null
+  status: 'pending' | 'accepted' | 'declined'
+  created_at: string
+  profiles?: Profile
 }
 
-// ✅ UPDATED: Task status simplified
 export type Task = {
   id: string
   council_id: string
@@ -96,10 +100,9 @@ export type Task = {
   status: 'active' | 'completed' | 'expired'
   created_at: string
   stat_categories?: StatCategory
-  assigner?: Profile
+  assigner?: Pick<Profile, 'id' | 'full_name' | 'username'>
 }
 
-// ✅ Submission handles approval state (separate from task)
 export type Submission = {
   id: string
   task_id: string
@@ -110,9 +113,10 @@ export type Submission = {
   submitted_at: string
   reviewed_at: string | null
   tasks?: Task
+  feedback?: Feedback[]
+  profiles?: Pick<Profile, 'id' | 'full_name' | 'username'>
 }
 
-// ✅ UPDATED: Feedback supports comments + reviews
 export type Feedback = {
   id: string
   submission_id: string
@@ -123,11 +127,24 @@ export type Feedback = {
   created_at: string
 }
 
-// ✅ NEW: Task templates (for low-friction assignment)
 export type TaskTemplate = {
   id: string
   title: string
   description: string | null
   stat_category_id: string
   suggested_value: number
+}
+
+export type ActivityLog = {
+  id: string
+  user_id: string
+  type: string
+  title: string
+  meta: {
+    stat?: string
+    points?: number
+    council_id?: string
+    assigned_to?: string
+  }
+  created_at: string
 }

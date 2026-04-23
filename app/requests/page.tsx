@@ -3,12 +3,16 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import type { CouncilRequest } from '@/lib/types'
+import PageHeader from '@/components/PageHeader'
+import EmptyState from '@/components/EmptyState'
 
 export default function RequestsPage() {
   const router = useRouter()
-  const [requests, setRequests] = useState<any[]>([])
+  const [requests, setRequests] = useState<CouncilRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [acting, setActing] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string>('')
 
   useEffect(() => {
     const load = async () => {
@@ -17,70 +21,51 @@ export default function RequestsPage() {
 
       const { data } = await supabase
         .from('council_requests')
-        .select('*, profiles!council_requests_requester_id_fkey(full_name, username, becoming_statement)')
+        .select('*, profiles!council_requests_requester_id_fkey(id, full_name, username, becoming_statement)')
         .eq('target_user_id', user.id)
         .eq('status', 'pending')
         .order('created_at', { ascending: false })
 
-      if (data) setRequests(data)
+      if (data) setRequests(data as CouncilRequest[])
       setLoading(false)
     }
     load()
   }, [router])
 
-  const handleAccept = async (request: any) => {
-    setActing(request.id)
+  const handleAccept = async (requestId: string) => {
+    setActing(requestId)
+    setActionError('')
 
-    // Get the user's council
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return
-
-    const { data: council } = await supabase
-      .from('councils')
-      .select('id')
-      .eq('owner_id', user.id)
-      .single()
-
-    if (!council) return
-
-    // Check council isn't full
-    const { count } = await supabase
-      .from('council_members')
-      .select('id', { count: 'exact' })
-      .eq('council_id', council.id)
-      .eq('status', 'active')
-
-    if ((count || 0) >= 5) {
-      alert('Your Council is full. Remove a member first.')
-      setActing(null)
-      return
-    }
-
-    // Add as council member
-    await supabase.from('council_members').insert({
-      council_id: council.id,
-      member_id: request.requester_id,
-      status: 'active',
-      joined_at: new Date().toISOString(),
+    const res = await fetch('/api/accept-request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ request_id: requestId }),
     })
 
-    // Update request status
-    await supabase
-      .from('council_requests')
-      .update({ status: 'accepted' })
-      .eq('id', request.id)
+    const data = await res.json()
 
-    setRequests(prev => prev.filter(r => r.id !== request.id))
+    if (data.success) {
+      setRequests(prev => prev.filter(r => r.id !== requestId))
+    } else {
+      setActionError(data.error || 'Something went wrong')
+    }
+
     setActing(null)
   }
 
   const handleDecline = async (requestId: string) => {
     setActing(requestId)
-    await supabase
+    setActionError('')
+
+    const { error } = await supabase
       .from('council_requests')
       .update({ status: 'declined' })
       .eq('id', requestId)
-    setRequests(prev => prev.filter(r => r.id !== requestId))
+
+    if (!error) {
+      setRequests(prev => prev.filter(r => r.id !== requestId))
+    }
+
     setActing(null)
   }
 
@@ -96,32 +81,21 @@ export default function RequestsPage() {
       style={{ backgroundColor: '#0F1117' }}>
       <div className="max-w-md mx-auto space-y-8">
 
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs tracking-[0.3em] uppercase"
-              style={{ color: '#7C3AED' }}>STATOSPHERE</p>
-            <h1 className="text-2xl font-black" style={{ color: '#F1F5F9' }}>
-              Council Requests
-            </h1>
+        <PageHeader title="Council Requests" backHref="/dashboard" />
+
+        {actionError && (
+          <div className="p-3 rounded-xl"
+            style={{ backgroundColor: '#1B1F3B', borderLeft: '3px solid #EF4444' }}>
+            <p className="text-sm" style={{ color: '#EF4444' }}>{actionError}</p>
           </div>
-          <Link href="/dashboard"
-            className="text-sm px-4 py-2 rounded-xl border"
-            style={{ borderColor: '#2D3158', color: '#64748B' }}>
-            ← Back
-          </Link>
-        </div>
+        )}
 
         {requests.length === 0 ? (
-          <div className="p-8 rounded-2xl border border-dashed text-center space-y-2"
-            style={{ borderColor: '#2D3158' }}>
-            <p className="font-bold" style={{ color: '#F1F5F9' }}>
-              No pending requests.
-            </p>
-            <p className="text-sm" style={{ color: '#64748B' }}>
-              When someone requests a seat on your Council,
-              they'll appear here.
-            </p>
-          </div>
+          <EmptyState
+            icon="🪑"
+            title="No pending requests."
+            description="When someone requests a seat on your Council, they'll appear here."
+          />
         ) : (
           <div className="space-y-4">
             <p className="text-xs tracking-widest uppercase"
@@ -144,7 +118,7 @@ export default function RequestsPage() {
                     </p>
                   )}
                   {req.profiles?.becoming_statement && (
-                    <p className="text-xs leading-relaxed pt-1"
+                    <p className="text-xs leading-relaxed pt-1 italic"
                       style={{ color: '#64748B' }}>
                       "{req.profiles.becoming_statement}"
                     </p>
@@ -173,7 +147,7 @@ export default function RequestsPage() {
                     Decline
                   </button>
                   <button
-                    onClick={() => handleAccept(req)}
+                    onClick={() => handleAccept(req.id)}
                     disabled={acting === req.id}
                     className="flex-1 py-3 rounded-xl font-bold text-sm
                       transition-all active:scale-95 disabled:opacity-40"
@@ -186,6 +160,7 @@ export default function RequestsPage() {
             ))}
           </div>
         )}
+
       </div>
     </main>
   )

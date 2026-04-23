@@ -11,6 +11,9 @@ type Props = {
 export default function StatBar({
   icon, name, value, streak = 0, showStreak = true
 }: Props) {
+  // Cap at 100 to prevent overflow, ensure minimum visibility
+  const barWidth = value > 0 ? Math.min(Math.max(value, 2), 100) : 0
+
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
@@ -36,8 +39,9 @@ export default function StatBar({
         <div
           className="h-2 rounded-full transition-all duration-700"
           style={{
-            width: `${Math.max(value, 2)}%`,
+            width: `${barWidth}%`,
             backgroundColor: '#7C3AED',
+            minWidth: value > 0 ? '8px' : '0px',
           }}
         />
       </div>

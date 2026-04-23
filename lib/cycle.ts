@@ -5,7 +5,7 @@ export function getDaysUntilCycleEnd(): number {
   return day === 0 ? 0 : 7 - day
 }
 
-// Returns the current cycle week start (Monday)
+// Returns the current cycle start (Monday)
 export function getCurrentCycleStart(): Date {
   const now = new Date()
   const day = now.getDay()
@@ -16,7 +16,19 @@ export function getCurrentCycleStart(): Date {
   return monday
 }
 
-// Returns a formatted cycle label e.g. "Week of Apr 22"
+// Returns ISO week key e.g. "2026-W17" — used as cycle_week in tasks
+export function getCycleKey(): string {
+  const start = getCurrentCycleStart()
+  const year = start.getFullYear()
+  // ISO week number
+  const jan1 = new Date(year, 0, 1)
+  const week = Math.ceil(
+    ((start.getTime() - jan1.getTime()) / 86400000 + jan1.getDay() + 1) / 7
+  )
+  return `${year}-W${String(week).padStart(2, '0')}`
+}
+
+// Returns a formatted cycle label e.g. "Week of 22 Apr"
 export function getCycleLabel(): string {
   const start = getCurrentCycleStart()
   return `Week of ${start.toLocaleDateString('en-GB', {
@@ -40,8 +52,7 @@ export function getStreakFlame(streak: number): string {
   return '🔥🔥🔥'
 }
 
-// Determines if a streak should increment — uses week comparison
-// not exact day diff, so late approvals don't break streaks
+// Determines if a streak should increment
 export function shouldIncrementStreak(
   lastCycleDate: string | null,
   currentDate: Date = new Date()
@@ -50,7 +61,6 @@ export function shouldIncrementStreak(
 
   const last = new Date(lastCycleDate)
 
-  // Get Monday of each week
   const getMondayOf = (d: Date) => {
     const day = d.getDay()
     const diff = day === 0 ? -6 : 1 - day
@@ -66,7 +76,7 @@ export function shouldIncrementStreak(
   const diffMs = currentWeekMonday.getTime() - lastWeekMonday.getTime()
   const diffWeeks = Math.round(diffMs / (7 * 24 * 60 * 60 * 1000))
 
-  if (diffWeeks === 0) return 'same_week'   // Already completed this week
-  if (diffWeeks === 1) return 'increment'    // Consecutive week
-  return 'reset'                              // Missed weeks
+  if (diffWeeks === 0) return 'same_week'
+  if (diffWeeks === 1) return 'increment'
+  return 'reset'
 }
