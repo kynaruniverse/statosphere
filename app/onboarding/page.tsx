@@ -1,384 +1,361 @@
 'use client'
-import { useState, useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import type { StatCategory } from '@/lib/types'
 
-const STEPS = ['becoming', 'stats', 'username'] as const
-type Step = typeof STEPS[number]
+const VR = {
+  bg: '#EBF0E5', surface: '#DDE5D5', card: '#FFFFFF',
+  border: '#C4D0B8', text: '#161D14', muted: '#627056',
+  accent: '#2D6A3F', accentMuted: '#D0E8D8', gold: '#6B8C3A',
+  rejected: '#A0302A',
+  display: "'Cinzel','Times New Roman',serif",
+  body: "'Spectral','Georgia',serif",
+}
+
+type StatCategory = { id: string; name: string; icon: string; description: string | null }
+
+const TOTAL_STEPS = 4
+
+const inputStyle: React.CSSProperties = {
+  display: 'block', width: '100%', padding: '13px 16px',
+  border: `1.5px solid ${VR.border}`, borderRadius: 10,
+  fontSize: 14, color: VR.text, background: VR.card,
+  outline: 'none', boxSizing: 'border-box', fontFamily: VR.body,
+  transition: 'border-color 0.15s',
+}
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const [step, setStep] = useState<Step>('becoming')
-  const [loading, setLoading] = useState(false)
-  const [userId, setUserId] = useState<string | null>(null)
 
-  // Form state
-  const [becoming, setBecoming] = useState('')
-  const [selectedStats, setSelectedStats] = useState<string[]>([])
-  const [username, setUsername] = useState('')
-  const [allStats, setAllStats] = useState<StatCategory[]>([])
-  const [usernameError, setUsernameError] = useState('')
+  const [step, setStep]               = useState(1)
+  const [userId, setUserId]           = useState('')
+  const [categories, setCategories]   = useState<StatCategory[]>([])
+  const [loading, setLoading]         = useState(false)
+  const [pageLoading, setPageLoading] = useState(true)
+  const [errors, setErrors]           = useState<Record<string, string>>({})
+
+  // Step fields
+  const [fullName, setFullName]         = useState('')
+  const [username, setUsername]         = useState('')
+  const [becoming, setBecoming]         = useState('')
+  const [selectedStats, setSelected]   = useState<string[]>([])
+  const [councilOpen, setCouncilOpen]   = useState(true)
+  const [profilePublic, setProfilePublic] = useState(true)
 
   useEffect(() => {
-    const init = async () => {
+    const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
+      if (!user) { router.replace('/'); return }
       setUserId(user.id)
 
-      // Check if already onboarded
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('onboarding_complete')
-        .eq('id', user.id)
-        .single()
+      const { data: profile } = await supabase.from('profiles').select('onboarding_complete').eq('id', user.id).single()
+      if (profile?.onboarding_complete) { router.replace('/dashboard'); return }
 
-      if (profile?.onboarding_complete) {
-        router.push('/dashboard')
-        return
-      }
-
-      // Load stats
-      const { data: stats } = await supabase
-        .from('stat_categories')
-        .select('*')
-        .order('name')
-      if (stats) setAllStats(stats)
+      const { data: cats } = await supabase.from('stat_categories').select('*').order('name')
+      if (cats) setCategories(cats)
+      setPageLoading(false)
     }
-    init()
+    load()
   }, [router])
 
   const toggleStat = (id: string) => {
-    setSelectedStats(prev => {
-      if (prev.includes(id)) return prev.filter(s => s !== id)
-      if (prev.length >= 5) return prev
-      return [...prev, id]
-    })
+    setSelected(prev =>
+      prev.includes(id)
+        ? prev.filter(s => s !== id)
+        : prev.length < 5 ? [...prev, id] : prev
+    )
   }
 
-  const handleComplete = async () => {
-    if (!userId || !username.trim()) return
+  const validateStep = () => {
+    const e: Record<string, string> = {}
+    if (step === 1) {
+      if (!fullName.trim())   e.fullName = 'Please enter your name'
+      if (username.trim().length < 3) e.username = 'Username must be at least 3 characters'
+      if (!/^[a-zA-Z0-9_]+$/.test(username)) e.username = 'Letters, numbers and underscores only'
+    }
+    if (step === 2 && !becoming.trim()) e.becoming = 'Please complete your becoming statement'
+    if (step === 3 && selectedStats.length === 0) e.stats = 'Choose at least one stat to train'
+    setErrors(e)
+    return Object.keys(e).length === 0
+  }
+
+  const next = async () => {
+    if (!validateStep()) return
+
+    if (step === 1) {
+      // Check username uniqueness
+      const { data: existing } = await supabase.from('profiles').select('id').eq('username', username.toLowerCase().trim()).neq('id', userId).single()
+      if (existing) { setErrors({ username: 'That username is already taken' }); return }
+    }
+
+    if (step < TOTAL_STEPS) { setStep(s => s + 1); return }
+
+    // Final submit
     setLoading(true)
-    setUsernameError('')
-  
-    // Check username unique
-    const { data: existing } = await supabase
-      .from('profiles')
-      .select('id')
-      .eq('username', username.toLowerCase().trim())
-      .neq('id', userId)
-      .single()
-  
-    if (existing) {
-      setUsernameError('That username is taken. Try another.')
-      setLoading(false)
-      return
-    }
-  
-    // Update profile
-    const { error: profileError } = await supabase
-      .from('profiles')
-      .update({
-        username: username.toLowerCase().trim(),
-        becoming_statement: becoming.trim(),
-        onboarding_complete: true,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', userId)
-  
-    if (profileError) {
-      setUsernameError('Something went wrong saving your profile. Please try again.')
-      setLoading(false)
-      return
-    }
-  
-    // Insert selected stats
-    if (selectedStats.length > 0) {
-      const statRows = selectedStats.map(statId => ({
-        user_id: userId,
-        stat_category_id: statId,
-        current_value: 0,
-      }))
-  
-      const { error: statsError } = await supabase
-        .from('user_stats')
-        .insert(statRows)
-  
-      if (statsError) {
-        setUsernameError('Profile saved but stats failed to save. Please try again.')
-        setLoading(false)
-        return
-      }
-    }
-  
-    router.push('/dashboard')
+
+    await supabase.from('profiles').update({
+      full_name: fullName.trim(),
+      username: username.toLowerCase().trim(),
+      becoming_statement: becoming.trim(),
+      council_requests_open: councilOpen,
+      profile_public: profilePublic,
+      onboarding_complete: true,
+      updated_at: new Date().toISOString(),
+    }).eq('id', userId)
+
+    // Create user_stats rows
+    const statRows = selectedStats.map(id => ({
+      user_id: userId,
+      stat_category_id: id,
+      current_value: 0,
+    }))
+    await supabase.from('user_stats').insert(statRows)
+
+    // Create council
+    const { data: council } = await supabase
+      .from('councils').insert({ owner_id: userId }).select('id').single()
+
+    setLoading(false)
+    router.replace('/dashboard')
   }
 
-  const canProceedBecoming = becoming.trim().length >= 10
-  const canProceedStats = selectedStats.length >= 3
-  const canProceedUsername = username.trim().length >= 3
+  const progress = (step / TOTAL_STEPS) * 100
 
-  const stepIndex = STEPS.indexOf(step)
-  const progress = ((stepIndex + 1) / STEPS.length) * 100
+  const stepMeta = [
+    { num: 1, label: 'Identity' },
+    { num: 2, label: 'Mission' },
+    { num: 3, label: 'Stats' },
+    { num: 4, label: 'Privacy' },
+  ]
+
+  if (pageLoading) return (
+    <main style={{ minHeight: '100svh', background: VR.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 26, height: 26, borderRadius: '50%', border: `2px solid ${VR.border}`, borderTopColor: VR.accent, animation: 'spin .85s linear infinite' }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </main>
+  )
 
   return (
-    <main className="min-h-screen flex flex-col px-6 py-12"
-      style={{ backgroundColor: '#0F1117' }}>
+    <main style={{
+      minHeight: '100svh', background: VR.bg,
+      display: 'flex', flexDirection: 'column',
+      alignItems: 'center', justifyContent: 'center',
+      padding: '24px 20px', fontFamily: VR.body,
+    }}>
+      {/* Ambient */}
+      <div style={{ position: 'fixed', top: -100, right: -80, width: 300, height: 300, borderRadius: '50%', background: 'rgba(45,106,63,0.06)', pointerEvents: 'none' }} />
+      <div style={{ position: 'fixed', bottom: -60, left: -60, width: 220, height: 220, borderRadius: '50%', background: 'rgba(107,140,58,0.07)', pointerEvents: 'none' }} />
 
-      <div className="max-w-md w-full mx-auto flex flex-col flex-1 space-y-8">
+      <div style={{ width: '100%', maxWidth: 390, position: 'relative', zIndex: 1 }}>
 
-        {/* Header */}
-        <div className="space-y-3">
-          <p className="text-xs tracking-[0.3em] uppercase"
-            style={{ color: '#7C3AED' }}>
-            STATOSPHERE — BUILD SETUP
-          </p>
-
-          {/* Progress bar */}
-          <div className="w-full h-1 rounded-full"
-            style={{ backgroundColor: '#1B1F3B' }}>
-            <div
-              className="h-1 rounded-full transition-all duration-500"
-              style={{ width: `${progress}%`, backgroundColor: '#7C3AED' }}
-            />
-          </div>
-          <p className="text-xs" style={{ color: '#64748B' }}>
-            Step {stepIndex + 1} of {STEPS.length}
-          </p>
+        {/* Logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 28 }}>
+          <div style={{
+            width: 32, height: 32, borderRadius: 9,
+            background: `linear-gradient(135deg, ${VR.accent}, ${VR.gold})`,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontFamily: VR.display, fontWeight: 900, fontSize: 15, color: '#FFFFFF',
+          }}>S</div>
+          <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.25em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.muted }}>Statosphere</span>
         </div>
 
-        {/* STEP 1 — Becoming */}
-        {step === 'becoming' && (
-          <div className="flex flex-col flex-1 space-y-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-black leading-tight"
-                style={{ color: '#F1F5F9' }}>
-                Who are you becoming?
-              </h1>
-              <p style={{ color: '#64748B' }}>
-                Not who you are. Who you're building toward.
-                Be honest. Be specific. This is your north star.
-              </p>
-            </div>
+        {/* Progress bar */}
+        <div style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+            {stepMeta.map(s => (
+              <div key={s.num} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                <div style={{
+                  width: 22, height: 22, borderRadius: '50%',
+                  background: step >= s.num ? VR.accent : VR.surface,
+                  border: `1.5px solid ${step >= s.num ? VR.accent : VR.border}`,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 9, fontWeight: 700, fontFamily: VR.display,
+                  color: step >= s.num ? '#FFFFFF' : VR.muted,
+                  transition: 'all 0.2s',
+                }}>
+                  {step > s.num ? '✓' : s.num}
+                </div>
+                <span style={{ fontSize: 8, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', fontFamily: VR.display, color: step === s.num ? VR.accent : VR.muted }}>
+                  {s.label}
+                </span>
+              </div>
+            ))}
+          </div>
+          <div style={{ height: 3, background: VR.surface, borderRadius: 2, overflow: 'hidden' }}>
+            <div style={{ height: '100%', width: `${progress}%`, background: `linear-gradient(90deg, ${VR.accent}, ${VR.gold})`, borderRadius: 2, transition: 'width 0.35s ease' }} />
+          </div>
+        </div>
 
-            <div className="space-y-2 flex-1">
-              <p className="text-sm font-medium" style={{ color: '#64748B' }}>
-                I am becoming someone who...
+        {/* Card */}
+        <div style={{
+          background: VR.card, border: `1px solid ${VR.border}`,
+          borderRadius: 20, padding: '26px 24px',
+          boxShadow: '0 4px 32px rgba(22,29,20,0.09)',
+        }}>
+
+          {/* ── STEP 1: Identity ── */}
+          {step === 1 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.accent, marginBottom: 6 }}>Step 1</p>
+              <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: VR.display, color: VR.text, marginBottom: 6, letterSpacing: '0.02em' }}>Who are you?</h2>
+              <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic', marginBottom: 22, lineHeight: 1.55 }}>Your name and username are how your Council and others will know you.</p>
+
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.1em', textTransform: 'uppercase', color: VR.muted, marginBottom: 7 }}>Full name</label>
+                <input type="text" value={fullName} onChange={e => { setFullName(e.target.value); setErrors({}) }} placeholder="Your full name" style={{ ...inputStyle, borderColor: errors.fullName ? VR.rejected : VR.border }} onFocus={e => { e.currentTarget.style.borderColor = VR.accent }} onBlur={e => { e.currentTarget.style.borderColor = errors.fullName ? VR.rejected : VR.border }} />
+                {errors.fullName && <p style={{ fontSize: 12, color: VR.rejected, marginTop: 5 }}>{errors.fullName}</p>}
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.1em', textTransform: 'uppercase', color: VR.muted, marginBottom: 7 }}>Username</label>
+                <div style={{ position: 'relative' }}>
+                  <span style={{ position: 'absolute', left: 16, top: '50%', transform: 'translateY(-50%)', fontWeight: 700, color: VR.accent, fontFamily: VR.display, fontSize: 14 }}>@</span>
+                  <input type="text" value={username} onChange={e => { setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase()); setErrors({}) }} maxLength={20} placeholder="yourname" style={{ ...inputStyle, paddingLeft: 32, borderColor: errors.username ? VR.rejected : VR.border, fontFamily: "'JetBrains Mono','Courier New',monospace" }} onFocus={e => { e.currentTarget.style.borderColor = errors.username ? VR.rejected : VR.accent }} onBlur={e => { e.currentTarget.style.borderColor = errors.username ? VR.rejected : VR.border }} />
+                </div>
+                {errors.username && <p style={{ fontSize: 12, color: VR.rejected, marginTop: 5 }}>{errors.username}</p>}
+              </div>
+            </div>
+          )}
+
+          {/* ── STEP 2: Becoming ── */}
+          {step === 2 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.accent, marginBottom: 6 }}>Step 2</p>
+              <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: VR.display, color: VR.text, marginBottom: 6, letterSpacing: '0.02em' }}>What are you becoming?</h2>
+              <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic', marginBottom: 22, lineHeight: 1.55 }}>
+                This becomes the headline of your build. Write it as if it's already true.
               </p>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.1em', textTransform: 'uppercase', color: VR.muted, marginBottom: 7 }}>I am becoming...</label>
               <textarea
                 value={becoming}
-                onChange={e => setBecoming(e.target.value)}
-                placeholder="...leads with confidence, stays disciplined under pressure, and builds something real."
-                rows={5}
-                className="w-full px-4 py-4 rounded-2xl text-base outline-none
-                  border resize-none leading-relaxed"
-                style={{
-                  backgroundColor: '#1B1F3B',
-                  borderColor: becoming.length > 0 ? '#7C3AED' : '#2D3158',
-                  color: '#F1F5F9',
-                }}
+                onChange={e => { setBecoming(e.target.value); setErrors({}) }}
+                placeholder="e.g. a person who shows up every day, no matter what"
+                rows={4}
+                style={{ ...inputStyle, resize: 'none', lineHeight: 1.6, borderColor: errors.becoming ? VR.rejected : VR.border }}
+                onFocus={e => { e.currentTarget.style.borderColor = VR.accent }}
+                onBlur={e => { e.currentTarget.style.borderColor = errors.becoming ? VR.rejected : VR.border }}
               />
-              <p className="text-xs text-right"
-                style={{ color: becoming.length < 10 ? '#64748B' : '#A3E635' }}>
-                {becoming.length} characters
-                {becoming.length < 10 ? ' — keep going' : ' — good'}
-              </p>
+              {errors.becoming && <p style={{ fontSize: 12, color: VR.rejected, marginTop: 5 }}>{errors.becoming}</p>}
             </div>
+          )}
 
+          {/* ── STEP 3: Stats ── */}
+          {step === 3 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.accent, marginBottom: 6 }}>Step 3</p>
+              <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: VR.display, color: VR.text, marginBottom: 6, letterSpacing: '0.02em' }}>Choose your stats.</h2>
+              <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic', marginBottom: 4, lineHeight: 1.55 }}>
+                Pick up to 5 areas you want your Council to hold you accountable in.
+              </p>
+              <p style={{ fontSize: 11, color: VR.accent, fontFamily: VR.display, fontWeight: 700, letterSpacing: '0.06em', marginBottom: 18 }}>
+                {selectedStats.length} / 5 selected
+              </p>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                {categories.map(cat => {
+                  const sel = selectedStats.includes(cat.id)
+                  const maxed = selectedStats.length >= 5 && !sel
+                  return (
+                    <button
+                      key={cat.id}
+                      onClick={() => !maxed && toggleStat(cat.id)}
+                      style={{
+                        padding: '12px 14px', borderRadius: 10, textAlign: 'left',
+                        border: `1.5px solid ${sel ? VR.accent : VR.border}`,
+                        background: sel ? VR.accentMuted : VR.surface,
+                        cursor: maxed ? 'not-allowed' : 'pointer',
+                        opacity: maxed ? 0.4 : 1,
+                        transition: 'all 0.15s', fontFamily: VR.body,
+                      }}>
+                      <p style={{ fontSize: 18, marginBottom: 5 }}>{cat.icon}</p>
+                      <p style={{ fontSize: 12, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.04em', color: sel ? VR.accent : VR.text, marginBottom: cat.description ? 3 : 0 }}>{cat.name}</p>
+                      {cat.description && <p style={{ fontSize: 10, color: VR.muted, lineHeight: 1.4 }}>{cat.description}</p>}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {errors.stats && <p style={{ fontSize: 12, color: VR.rejected, marginTop: 12 }}>{errors.stats}</p>}
+            </div>
+          )}
+
+          {/* ── STEP 4: Privacy ── */}
+          {step === 4 && (
+            <div>
+              <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.accent, marginBottom: 6 }}>Step 4</p>
+              <h2 style={{ fontSize: 20, fontWeight: 700, fontFamily: VR.display, color: VR.text, marginBottom: 6, letterSpacing: '0.02em' }}>Last things.</h2>
+              <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic', marginBottom: 22, lineHeight: 1.55 }}>
+                You can change these any time in Settings.
+              </p>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {[
+                  { label: 'Public profile', desc: 'Others can find and view your build page', value: profilePublic, set: setProfilePublic },
+                  { label: 'Open council requests', desc: 'People can request a seat on your council', value: councilOpen, set: setCouncilOpen },
+                ].map(item => (
+                  <div key={item.label} style={{
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16,
+                    padding: '14px 16px', background: VR.surface, border: `1px solid ${VR.border}`, borderRadius: 12,
+                  }}>
+                    <div>
+                      <p style={{ fontWeight: 700, fontSize: 13, color: VR.text, marginBottom: 2, fontFamily: VR.display, letterSpacing: '0.02em' }}>{item.label}</p>
+                      <p style={{ fontSize: 11, color: VR.muted, fontStyle: 'italic' }}>{item.desc}</p>
+                    </div>
+                    <button
+                      onClick={() => item.set(!item.value)}
+                      style={{
+                        flexShrink: 0, width: 44, height: 24, borderRadius: 12,
+                        background: item.value ? VR.accent : VR.card,
+                        border: `1px solid ${item.value ? VR.accent : VR.border}`,
+                        position: 'relative', cursor: 'pointer', transition: 'all 0.2s',
+                      }}>
+                      <div style={{
+                        position: 'absolute', top: 3, width: 16, height: 16, borderRadius: '50%',
+                        background: '#FFFFFF', left: item.value ? 23 : 3,
+                        transition: 'left 0.2s',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.15)',
+                      }} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Nav buttons */}
+          <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+            {step > 1 && (
+              <button
+                onClick={() => setStep(s => s - 1)}
+                style={{
+                  flex: 1, padding: '13px', background: VR.surface, color: VR.muted,
+                  border: `1px solid ${VR.border}`, borderRadius: 10,
+                  fontSize: 12, fontWeight: 700, fontFamily: VR.display,
+                  letterSpacing: '0.08em', textTransform: 'uppercase', cursor: 'pointer',
+                }}>
+                ← Back
+              </button>
+            )}
             <button
-              onClick={() => setStep('stats')}
-              disabled={!canProceedBecoming}
-              className="w-full py-4 px-6 rounded-2xl font-bold text-base
-                tracking-wide transition-all active:scale-95 disabled:opacity-40"
-              style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
-              Set My Direction →
+              onClick={next}
+              disabled={loading}
+              style={{
+                flex: 2, padding: '13px',
+                background: VR.accent, color: '#FFFFFF',
+                border: 'none', borderRadius: 10,
+                fontSize: 12, fontWeight: 700, fontFamily: VR.display,
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                cursor: loading ? 'not-allowed' : 'pointer',
+                opacity: loading ? 0.6 : 1,
+                boxShadow: `0 2px 12px ${VR.accent}25`,
+              }}>
+              {loading ? 'Setting up...' : step === TOTAL_STEPS ? 'Begin your build →' : 'Continue →'}
             </button>
           </div>
-        )}
 
-        {/* STEP 2 — Stats */}
-        {step === 'stats' && (
-          <div className="flex flex-col flex-1 space-y-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-black leading-tight"
-                style={{ color: '#F1F5F9' }}>
-                Choose your stats.
-              </h1>
-              <p style={{ color: '#64748B' }}>
-                Pick 3 to 5 areas you want to actively develop.
-                Your Council will assign challenges around these.
-              </p>
-            </div>
-
-            {/* Selected count */}
-            <div className="flex items-center justify-between">
-              <p className="text-sm" style={{ color: '#64748B' }}>
-                {selectedStats.length} of 5 selected
-              </p>
-              {selectedStats.length >= 3 && (
-                <p className="text-sm font-medium" style={{ color: '#A3E635' }}>
-                  ✓ Ready to continue
-                </p>
-              )}
-            </div>
-
-            {/* Stat grid */}
-            <div className="grid grid-cols-2 gap-3 flex-1">
-              {allStats.map(stat => {
-                const isSelected = selectedStats.includes(stat.id)
-                const isDisabled = !isSelected && selectedStats.length >= 5
-                return (
-                  <button
-                    key={stat.id}
-                    onClick={() => !isDisabled && toggleStat(stat.id)}
-                    className="p-4 rounded-2xl text-left transition-all active:scale-95
-                      border space-y-1"
-                    style={{
-                      backgroundColor: isSelected ? '#7C3AED' : '#1B1F3B',
-                      borderColor: isSelected ? '#7C3AED' : '#2D3158',
-                      opacity: isDisabled ? 0.4 : 1,
-                    }}>
-                    <p className="text-2xl">{stat.icon}</p>
-                    <p className="font-bold text-sm"
-                      style={{ color: '#F1F5F9' }}>
-                      {stat.name}
-                    </p>
-                    <p className="text-xs leading-tight"
-                      style={{ color: isSelected ? '#E2D9F3' : '#64748B' }}>
-                      {stat.description}
-                    </p>
-                  </button>
-                )
-              })}
-            </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                onClick={() => setStep('becoming')}
-                className="py-4 px-6 rounded-2xl font-bold text-base border
-                  transition-all active:scale-95"
-                style={{ borderColor: '#2D3158', color: '#64748B' }}>
-                ←
-              </button>
-              <button
-                onClick={() => setStep('username')}
-                disabled={!canProceedStats}
-                className="flex-1 py-4 px-6 rounded-2xl font-bold text-base
-                  tracking-wide transition-all active:scale-95 disabled:opacity-40"
-                style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
-                Lock In My Build →
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* STEP 3 — Username */}
-        {step === 'username' && (
-          <div className="flex flex-col flex-1 space-y-6">
-            <div className="space-y-2">
-              <h1 className="text-3xl font-black leading-tight"
-                style={{ color: '#F1F5F9' }}>
-                Choose your handle.
-              </h1>
-              <p style={{ color: '#64748B' }}>
-                This is how your Council will see you.
-                Make it yours.
-              </p>
-            </div>
-
-            <div className="space-y-2 flex-1">
-              <label className="text-sm font-medium"
-                style={{ color: '#64748B' }}>
-                Username
-              </label>
-              <div className="relative">
-                <span className="absolute left-4 top-1/2 -translate-y-1/2 font-bold"
-                  style={{ color: '#7C3AED' }}>
-                  @
-                </span>
-                <input
-                  type="text"
-                  value={username}
-                  onChange={e => {
-                    setUsernameError('')
-                    setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').toLowerCase())
-                  }}
-                  placeholder="yourname"
-                  maxLength={20}
-                  className="w-full pl-8 pr-4 py-4 rounded-2xl text-base
-                    outline-none border font-mono"
-                  style={{
-                    backgroundColor: '#1B1F3B',
-                    borderColor: usernameError ? '#EF4444'
-                      : username.length >= 3 ? '#7C3AED' : '#2D3158',
-                    color: '#F1F5F9',
-                  }}
-                />
-              </div>
-            {usernameError && (
-              <p className="text-sm p-3 rounded-xl"
-                style={{ color: '#EF4444', backgroundColor: '#1B1F3B' }}>
-                {usernameError}
-              </p>
-            )}
-              <p className="text-xs" style={{ color: '#64748B' }}>
-                Letters, numbers, underscores only. Max 20 characters.
-              </p>
-            </div>
-
-            {/* Summary card */}
-            {username.length >= 3 && (
-              <div className="p-4 rounded-2xl border space-y-3"
-                style={{ backgroundColor: '#1B1F3B', borderColor: '#2D3158' }}>
-                <p className="text-xs tracking-widest uppercase"
-                  style={{ color: '#7C3AED' }}>
-                  YOUR BUILD
-                </p>
-                <p className="font-black text-lg"
-                  style={{ color: '#F1F5F9' }}>
-                  @{username}
-                </p>
-                <p className="text-sm leading-relaxed"
-                  style={{ color: '#64748B' }}>
-                  "{becoming}"
-                </p>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {selectedStats.map(statId => {
-                    const stat = allStats.find(s => s.id === statId)
-                    if (!stat) return null
-                    return (
-                      <span key={statId}
-                        className="px-3 py-1 rounded-full text-xs font-bold"
-                        style={{ backgroundColor: '#2D3158', color: '#A3E635' }}>
-                        {stat.icon} {stat.name}
-                      </span>
-                    )
-                  })}
-                </div>
-              </div>
-            )}
-
-            <div className="flex gap-3">
-              <button
-                onClick={() => setStep('stats')}
-                className="py-4 px-6 rounded-2xl font-bold text-base border
-                  transition-all active:scale-95"
-                style={{ borderColor: '#2D3158', color: '#64748B' }}>
-                ←
-              </button>
-              <button
-                onClick={handleComplete}
-                disabled={loading || !canProceedUsername}
-                className="flex-1 py-4 px-6 rounded-2xl font-bold text-base
-                  tracking-wide transition-all active:scale-95 disabled:opacity-40"
-                style={{ backgroundColor: '#A3E635', color: '#0F1117' }}>
-                {loading ? 'Building...' : 'Enter Statosphere →'}
-              </button>
-            </div>
-          </div>
-        )}
-
+        </div>
       </div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </main>
   )
 }

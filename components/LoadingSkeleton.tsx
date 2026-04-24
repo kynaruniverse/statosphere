@@ -3,16 +3,23 @@ type Props = {
   className?: string
 }
 
+const shimmer: React.CSSProperties = {
+  background: 'linear-gradient(90deg, var(--vr-surface) 25%, var(--vr-border) 50%, var(--vr-surface) 75%)',
+  backgroundSize: '200% 100%',
+  animation: 'vrShimmer 1.4s ease-in-out infinite',
+  borderRadius: 6,
+}
+
 export function SkeletonLine({ width = 'full', height = 4 }: {
   width?: string | number
   height?: number
 }) {
   return (
     <div
-      className={`rounded-lg animate-pulse w-${width}`}
       style={{
+        ...shimmer,
         height: `${height * 4}px`,
-        backgroundColor: '#1B1F3B',
+        width: width === 'full' ? '100%' : typeof width === 'number' ? `${width}px` : width,
       }}
     />
   )
@@ -20,46 +27,57 @@ export function SkeletonLine({ width = 'full', height = 4 }: {
 
 export function SkeletonCard() {
   return (
-    <div
-      className="p-5 rounded-2xl border space-y-3 animate-pulse"
-      style={{ backgroundColor: '#1B1F3B', borderColor: '#2D3158' }}>
-      <SkeletonLine width="1/3" height={3} />
+    <div style={{
+      padding: 20,
+      borderRadius: 12,
+      border: '1px solid var(--vr-border)',
+      background: 'var(--vr-card)',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 12,
+    }}>
+      <SkeletonLine width="33%" height={3} />
       <SkeletonLine width="full" height={4} />
-      <SkeletonLine width="4/5" height={3} />
+      <SkeletonLine width="80%" height={3} />
     </div>
   )
 }
 
 export function SkeletonStat() {
   return (
-    <div className="space-y-2 animate-pulse">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg"
-            style={{ backgroundColor: '#1B1F3B' }} />
-          <div className="w-20 h-4 rounded-lg"
-            style={{ backgroundColor: '#1B1F3B' }} />
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ ...shimmer, width: 24, height: 24, borderRadius: 6 }} />
+          <div style={{ ...shimmer, width: 72, height: 12 }} />
         </div>
-        <div className="w-8 h-4 rounded-lg"
-          style={{ backgroundColor: '#1B1F3B' }} />
+        <div style={{ ...shimmer, width: 28, height: 12 }} />
       </div>
-      <div className="w-full h-2 rounded-full"
-        style={{ backgroundColor: '#1B1F3B' }} />
+      <div style={{ ...shimmer, width: '100%', height: 6, borderRadius: 3 }} />
     </div>
   )
 }
 
 export default function LoadingSkeleton({ lines = 3 }: Props) {
   return (
-    <main className="min-h-screen px-6 py-12"
-      style={{ backgroundColor: '#0F1117' }}>
-      <div className="max-w-md mx-auto space-y-8">
-        <div className="space-y-2">
-          <SkeletonLine width="1/4" height={3} />
-          <SkeletonLine width="1/2" height={6} />
+    <main style={{
+      minHeight: '100svh',
+      background: 'var(--vr-bg)',
+      padding: '48px 24px',
+    }}>
+      <style>{`
+        @keyframes vrShimmer {
+          0%   { background-position: 200% 0 }
+          100% { background-position: -200% 0 }
+        }
+      `}</style>
+      <div style={{ maxWidth: 440, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 32 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <SkeletonLine width="25%" height={3} />
+          <SkeletonLine width="50%" height={6} />
         </div>
         <SkeletonCard />
-        <div className="space-y-4">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
           {Array.from({ length: lines }).map((_, i) => (
             <SkeletonStat key={i} />
           ))}

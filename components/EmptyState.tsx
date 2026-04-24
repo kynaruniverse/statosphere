@@ -11,34 +11,83 @@ type Props = {
 
 export default function EmptyState({ title, description, action, icon }: Props) {
   return (
-    <div
-      className="p-8 rounded-2xl border border-dashed text-center space-y-3"
-      style={{ borderColor: '#2D3158' }}>
-      {icon && <p className="text-4xl">{icon}</p>}
-      <p className="font-bold" style={{ color: '#F1F5F9' }}>
+    <div style={{
+      padding: '36px 24px',
+      borderRadius: 12,
+      border: '1.5px dashed var(--vr-border)',
+      textAlign: 'center',
+      background: 'rgba(255,255,255,0.4)',
+    }}>
+      {icon && (
+        <p style={{ fontSize: 32, marginBottom: 12, lineHeight: 1 }}>
+          {icon}
+        </p>
+      )}
+
+      <p style={{
+        fontFamily: 'var(--font-display)',
+        fontWeight: 700,
+        fontSize: 14,
+        letterSpacing: '0.04em',
+        color: 'var(--vr-text)',
+        marginBottom: 8,
+      }}>
         {title}
       </p>
-      <p className="text-sm leading-relaxed" style={{ color: '#64748B' }}>
+
+      <p style={{
+        fontSize: 13,
+        lineHeight: 1.6,
+        color: 'var(--vr-muted)',
+        maxWidth: 280,
+        margin: '0 auto',
+        fontStyle: 'italic',
+      }}>
         {description}
       </p>
+
       {action && (
-        action.href ? (
-          <a
-            href={action.href}
-            className="inline-block mt-2 px-6 py-3 rounded-xl font-bold text-sm
-              transition-all active:scale-95"
-            style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
-            {action.label}
-          </a>
-        ) : (
-          <button
-            onClick={action.onClick}
-            className="mt-2 px-6 py-3 rounded-xl font-bold text-sm
-              transition-all active:scale-95"
-            style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
-            {action.label}
-          </button>
-        )
+        <div style={{ marginTop: 20 }}>
+          {action.href ? (
+            <a
+              href={action.href}
+              style={{
+                display: 'inline-block',
+                padding: '10px 20px',
+                background: 'var(--vr-accent)',
+                color: '#FFFFFF',
+                borderRadius: 8,
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: 11,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                textDecoration: 'none',
+              }}
+            >
+              {action.label}
+            </a>
+          ) : (
+            <button
+              onClick={action.onClick}
+              style={{
+                padding: '10px 20px',
+                background: 'var(--vr-accent)',
+                color: '#FFFFFF',
+                borderRadius: 8,
+                fontFamily: 'var(--font-display)',
+                fontWeight: 700,
+                fontSize: 11,
+                letterSpacing: '0.1em',
+                textTransform: 'uppercase',
+                border: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              {action.label}
+            </button>
+          )}
+        </div>
       )}
     </div>
   )

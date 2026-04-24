@@ -6,45 +6,103 @@ type Props = {
   value: number
   streak?: number
   showStreak?: boolean
+  animate?: boolean
 }
 
 export default function StatBar({
-  icon, name, value, streak = 0, showStreak = true
+  icon, name, value, streak = 0, showStreak = true, animate = true,
 }: Props) {
-  // Cap at 100 to prevent overflow, ensure minimum visibility
   const barWidth = value > 0 ? Math.min(Math.max(value, 2), 100) : 0
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-lg">{icon}</span>
-          <span className="font-bold text-sm" style={{ color: '#F1F5F9' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+
+      {/* Label row */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span style={{ fontSize: 15, lineHeight: 1 }}>{icon}</span>
+          <span style={{
+            fontSize: 10,
+            fontWeight: 700,
+            letterSpacing: '0.18em',
+            textTransform: 'uppercase',
+            color: 'var(--vr-muted)',
+            fontFamily: 'var(--font-display)',
+          }}>
             {name}
           </span>
           {showStreak && streak > 0 && (
-            <span className="text-xs">
+            <span style={{
+              fontSize: 10,
+              fontFamily: 'var(--font-mono)',
+              color: '#8B6914',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 2,
+            }}>
               {getStreakFlame(streak)}
-              <span className="ml-1 font-mono" style={{ color: '#F59E0B' }}>
-                {streak}w
-              </span>
+              <span>{streak}w</span>
             </span>
           )}
         </div>
-        <span className="font-mono text-sm font-bold" style={{ color: '#A3E635' }}>
+        <span style={{
+          fontSize: 13,
+          fontWeight: 700,
+          fontFamily: 'var(--font-mono)',
+          color: 'var(--vr-accent)',
+          letterSpacing: '0.05em',
+        }}>
           {value}
         </span>
       </div>
-      <div className="w-full h-2 rounded-full" style={{ backgroundColor: '#0F1117' }}>
-        <div
-          className="h-2 rounded-full transition-all duration-700"
-          style={{
-            width: `${barWidth}%`,
-            backgroundColor: '#7C3AED',
-            minWidth: value > 0 ? '8px' : '0px',
-          }}
-        />
+
+      {/* Gauge track */}
+      <div style={{
+        width: '100%',
+        height: 6,
+        background: 'var(--vr-stat-bg)',
+        borderRadius: 3,
+        overflow: 'hidden',
+        border: '1px solid var(--vr-border)',
+        position: 'relative',
+      }}>
+        {/* Notch marks — subtle Souls-like gauge markers */}
+        {[25, 50, 75].map(pct => (
+          <div key={pct} style={{
+            position: 'absolute',
+            left: `${pct}%`,
+            top: 0,
+            bottom: 0,
+            width: 1,
+            background: 'rgba(196, 208, 184, 0.8)',
+            zIndex: 2,
+          }} />
+        ))}
+
+        {/* Fill */}
+        <div style={{
+          height: '100%',
+          width: `${barWidth}%`,
+          background: `linear-gradient(90deg, var(--vr-accent) 0%, var(--vr-gold) 100%)`,
+          borderRadius: 3,
+          minWidth: value > 0 ? 6 : 0,
+          transition: animate ? 'width 0.8s cubic-bezier(0.22, 1, 0.36, 1)' : 'none',
+          position: 'relative',
+          zIndex: 1,
+        }}>
+          {/* Sheen overlay */}
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            height: '45%',
+            background: 'rgba(255,255,255,0.25)',
+            borderRadius: '3px 3px 0 0',
+          }} />
+        </div>
       </div>
+
     </div>
   )
 }

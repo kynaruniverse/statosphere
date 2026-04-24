@@ -2,308 +2,227 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter } from 'next/navigation'
-import type { StatCategory } from '@/lib/types'
-import Link from 'next/link'
+import PageHeader from '@/components/PageHeader'
 
-type CouncilOption = {
-  id: string
-  name: string
-  role: 'owner' | 'member'
-  owner_id: string
+const VR = {
+  bg: '#EBF0E5', surface: '#DDE5D5', card: '#FFFFFF',
+  border: '#C4D0B8', text: '#161D14', muted: '#627056',
+  accent: '#2D6A3F', accentMuted: '#D0E8D8', gold: '#6B8C3A',
+  display: "'Cinzel','Times New Roman',serif",
+  body: "'Spectral','Georgia',serif",
 }
 
-type MemberOption = {
-  id: string
-  full_name: string | null
-  username: string | null
+type StatCategory = { id: string; name: string; icon: string }
+type Member = { id: string; member_id: string; profiles: { id: string; full_name: string | null; username: string | null } }
+
+const inputStyle: React.CSSProperties = {
+  display: 'block', width: '100%', padding: '13px 16px',
+  border: `1.5px solid ${VR.border}`, borderRadius: 10,
+  fontSize: 14, color: VR.text, background: VR.card,
+  outline: 'none', boxSizing: 'border-box', fontFamily: VR.body,
+  transition: 'border-color 0.15s',
 }
 
 export default function AssignTaskPage() {
   const router = useRouter()
-  const [loading, setLoading] = useState(false)
-  const [pageLoading, setPageLoading] = useState(true)
-  const [stats, setStats] = useState<StatCategory[]>([])
-  const [councils, setCouncils] = useState<CouncilOption[]>([])
-  const [selectedCouncil, setSelectedCouncil] = useState<string>('')
-  const [selectedStat, setSelectedStat] = useState<string>('')
-  const [assignTo, setAssignTo] = useState<string>('')
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [councilMembers, setCouncilMembers] = useState<MemberOption[]>([])
-  const [success, setSuccess] = useState(false)
+
+  const [categories, setCategories] = useState<StatCategory[]>([])
+  const [members, setMembers]       = useState<Member[]>([])
+  const [assignableUsers, setAssignable] = useState<{ id: string; label: string }[]>([])
+
+  const [selectedUser, setSelectedUser]   = useState('')
+  const [selectedStat, setSelectedStat]   = useState('')
+  const [title, setTitle]                 = useState('')
+  const [description, setDescription]     = useState('')
+  const [loading, setLoading]             = useState(false)
+  const [pageLoading, setPageLoading]     = useState(true)
+  const [success, setSuccess]             = useState(false)
+  const [userId, setUserId]               = useState('')
 
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
+      if (!user) { router.push('/'); return }
+      setUserId(user.id)
 
-      const { data: statsData } = await supabase
-        .from('stat_categories')
-        .select('*')
-        .order('name')
-      if (statsData) setStats(statsData)
+      const [{ data: cats }, { data: council }] = await Promise.all([
+        supabase.from('stat_categories').select('*').order('name'),
+        supabase.from('councils').select('id').eq('owner_id', user.id).single(),
+      ])
 
-      const { data: memberOf } = await supabase
-        .from('council_members')
-        .select('council_id, councils(id, name, owner_id)')
-        .eq('member_id', user.id)
-        .eq('status', 'active')
+      if (cats) setCategories(cats)
 
-      const { data: ownedCouncil } = await supabase
-        .from('councils')
-        .select('*')
-        .eq('owner_id', user.id)
-        .single()
+      // Build assignable list: self + active council members
+      const list: { id: string; label: string }[] = [
+        { id: user.id, label: 'Myself' },
+      ]
 
-      const allCouncils: CouncilOption[] = []
-
-      if (ownedCouncil) {
-        allCouncils.push({
-          id: ownedCouncil.id,
-          name: ownedCouncil.name,
-          owner_id: ownedCouncil.owner_id,
-          role: 'owner'
-        })
+      if (council) {
+        const { data: membersData } = await supabase
+          .from('council_members')
+          .select('id, member_id, profiles(id, full_name, username)')
+          .eq('council_id', council.id)
+          .eq('status', 'active')
+        if (membersData) {
+          setMembers(membersData as Member[])
+          membersData.forEach((m: any) => {
+            if (m.member_id !== user.id) {
+              list.push({
+                id: m.member_id,
+                label: m.profiles?.full_name || `@${m.profiles?.username}` || 'Member',
+              })
+            }
+          })
+        }
       }
 
-      if (memberOf) {
-        memberOf.forEach((m: any) => {
-          if (m.councils) {
-            allCouncils.push({
-              id: m.councils.id,
-              name: m.councils.name,
-              owner_id: m.councils.owner_id,
-              role: 'member'
-            })
-          }
-        })
-      }
-
-      setCouncils(allCouncils)
-      if (allCouncils.length > 0) setSelectedCouncil(allCouncils[0].id)
+      setAssignable(list)
+      if (list.length > 0) setSelectedUser(list[0].id)
       setPageLoading(false)
     }
     load()
   }, [router])
 
-  useEffect(() => {
-    const loadMembers = async () => {
-      if (!selectedCouncil) return
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-
-      const council = councils.find(c => c.id === selectedCouncil)
-      if (!council) return
-
-      const members: MemberOption[] = []
-
-      if (council.role === 'owner') {
-        const { data: ownerProfile } = await supabase
-          .from('profiles')
-          .select('id, full_name, username')
-          .eq('id', user.id)
-          .single()
-        if (ownerProfile) members.push(ownerProfile)
-
-        const { data: councilMembersData } = await supabase
-          .from('council_members')
-          .select('member_id, profiles(id, full_name, username)')
-          .eq('council_id', selectedCouncil)
-          .eq('status', 'active')
-
-        if (councilMembersData) {
-          councilMembersData.forEach((m: any) => {
-            if (m.profiles) members.push(m.profiles)
-          })
-        }
-      } else {
-        const { data: ownerProfile } = await supabase
-          .from('profiles')
-          .select('id, full_name, username')
-          .eq('id', council.owner_id)
-          .single()
-        if (ownerProfile) members.push(ownerProfile)
-      }
-
-      setCouncilMembers(members)
-      if (members.length > 0) setAssignTo(members[0].id)
-    }
-    loadMembers()
-  }, [selectedCouncil, councils])
-
-  const handleSubmit = async () => {
-    if (!selectedCouncil || !assignTo || !selectedStat || !title.trim()) return
+  const handleAssign = async () => {
+    if (!title.trim() || !selectedStat || !selectedUser) return
     setLoading(true)
 
-    const dueDate = new Date()
-    dueDate.setDate(dueDate.getDate() + (7 - dueDate.getDay()))
-    dueDate.setHours(23, 59, 59, 0)
-
-    const res = await fetch('/api/create-task', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        council_id: selectedCouncil,
-        assigned_to: assignTo,
-        stat_category_id: selectedStat,
-        title: title.trim(),
-        description: description.trim(),
-        due_date: dueDate.toISOString(),
-      }),
+    const { error } = await supabase.from('tasks').insert({
+      title: title.trim(),
+      description: description.trim() || null,
+      stat_category_id: selectedStat,
+      assigned_to: selectedUser,
+      assigned_by: userId,
+      status: 'active',
     })
 
-    const data = await res.json()
-    if (data.success) setSuccess(true)
+    if (!error) {
+      setSuccess(true)
+      setTimeout(() => router.push('/dashboard'), 1800)
+    }
     setLoading(false)
   }
 
-  const canSubmit = selectedCouncil && assignTo && selectedStat && title.trim().length > 3
-
-  if (success) return (
-    <main className="min-h-screen flex flex-col items-center justify-center px-6"
-      style={{ backgroundColor: '#0F1117' }}>
-      <div className="max-w-md w-full text-center space-y-6">
-        <p className="text-xs tracking-[0.3em] uppercase"
-          style={{ color: '#7C3AED' }}>TASK ASSIGNED</p>
-        <h1 className="text-3xl font-black" style={{ color: '#F1F5F9' }}>
-          Challenge sent.
-        </h1>
-        <p style={{ color: '#64748B' }}>The task is now live and waiting.</p>
-        <div className="flex gap-3 justify-center">
-          <button onClick={() => { setSuccess(false); setTitle(''); setDescription('') }}
-            className="px-6 py-3 rounded-xl font-bold text-sm border"
-            style={{ borderColor: '#2D3158', color: '#64748B' }}>
-            Assign Another
-          </button>
-          <Link href="/dashboard"
-            className="px-6 py-3 rounded-xl font-bold text-sm"
-            style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
-            Dashboard →
-          </Link>
-        </div>
-      </div>
-    </main>
-  )
+  const labelStyle: React.CSSProperties = {
+    display: 'block', fontSize: 11, fontWeight: 700,
+    fontFamily: VR.display, letterSpacing: '0.1em',
+    textTransform: 'uppercase', color: VR.muted, marginBottom: 7,
+  }
 
   if (pageLoading) return (
-    <main className="min-h-screen flex items-center justify-center"
-      style={{ backgroundColor: '#0F1117' }}>
-      <p style={{ color: '#64748B' }}>Loading...</p>
+    <main style={{ minHeight: '100svh', background: VR.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 26, height: 26, borderRadius: '50%', border: `2px solid ${VR.border}`, borderTopColor: VR.accent, animation: 'spin .85s linear infinite' }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </main>
   )
 
+  if (success) return (
+    <main style={{ minHeight: '100svh', background: VR.bg, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, fontFamily: VR.body }}>
+      <p style={{ fontSize: 36 }}>⚔️</p>
+      <p style={{ fontSize: 18, fontWeight: 700, fontFamily: VR.display, color: VR.text, letterSpacing: '0.04em' }}>Challenge Issued</p>
+      <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic' }}>Returning to your build...</p>
+    </main>
+  )
+
+  const canSubmit = title.trim() && selectedStat && selectedUser
+
   return (
-    <main className="min-h-screen px-6 py-12"
-      style={{ backgroundColor: '#0F1117' }}>
-      <div className="max-w-md mx-auto space-y-8">
+    <main style={{ minHeight: '100svh', background: VR.bg, padding: '0 20px 80px', fontFamily: VR.body }}>
+      <div style={{ maxWidth: 440, margin: '0 auto', paddingTop: 'calc(env(safe-area-inset-top,0px) + 20px)' }}>
 
-        <div className="flex items-center justify-between">
-          <div className="space-y-1">
-            <p className="text-xs tracking-[0.3em] uppercase"
-              style={{ color: '#7C3AED' }}>STATOSPHERE</p>
-            <h1 className="text-2xl font-black" style={{ color: '#F1F5F9' }}>
-              Assign a Task
-            </h1>
+        <PageHeader title="Assign Task" backHref="/dashboard" />
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+
+          {/* Assign to */}
+          <div>
+            <label style={labelStyle}>Assign to</label>
+            <select
+              value={selectedUser}
+              onChange={e => setSelectedUser(e.target.value)}
+              style={{ ...inputStyle }}
+              onFocus={e => { e.currentTarget.style.borderColor = VR.accent }}
+              onBlur={e => { e.currentTarget.style.borderColor = VR.border }}
+            >
+              {assignableUsers.map(u => (
+                <option key={u.id} value={u.id}>{u.label}</option>
+              ))}
+            </select>
           </div>
-          <Link href="/dashboard"
-            className="text-sm px-4 py-2 rounded-xl border"
-            style={{ borderColor: '#2D3158', color: '#64748B' }}>
-            ← Back
-          </Link>
-        </div>
 
-        <div className="space-y-5">
-
-          {councilMembers.length > 1 && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium" style={{ color: '#64748B' }}>
-                Assign to
-              </label>
-              <select
-                value={assignTo}
-                onChange={e => setAssignTo(e.target.value)}
-                className="w-full px-4 py-4 rounded-2xl text-base outline-none border"
-                style={{
-                  backgroundColor: '#1B1F3B',
-                  borderColor: '#2D3158',
-                  color: '#F1F5F9',
-                }}>
-                {councilMembers.map(m => (
-                  <option key={m.id} value={m.id}>
-                    {m.full_name || m.username || 'Member'}
-                  </option>
-                ))}
-              </select>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: '#64748B' }}>
-              Which stat does this build?
-            </label>
-            <div className="grid grid-cols-2 gap-2">
-              {stats.map(stat => (
+          {/* Stat */}
+          <div>
+            <label style={labelStyle}>Stat to train</label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {categories.map(cat => (
                 <button
-                  key={stat.id}
-                  onClick={() => setSelectedStat(stat.id)}
-                  className="p-3 rounded-xl text-left border transition-all"
+                  key={cat.id}
+                  onClick={() => setSelectedStat(cat.id)}
                   style={{
-                    backgroundColor: selectedStat === stat.id ? '#7C3AED' : '#1B1F3B',
-                    borderColor: selectedStat === stat.id ? '#7C3AED' : '#2D3158',
+                    padding: '12px 14px',
+                    borderRadius: 10,
+                    border: `1.5px solid ${selectedStat === cat.id ? VR.accent : VR.border}`,
+                    background: selectedStat === cat.id ? VR.accentMuted : VR.surface,
+                    cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', gap: 8,
+                    fontFamily: VR.body,
+                    transition: 'all 0.15s',
                   }}>
-                  <span className="text-lg">{stat.icon}</span>
-                  <p className="text-sm font-bold mt-1" style={{ color: '#F1F5F9' }}>
-                    {stat.name}
-                  </p>
+                  <span style={{ fontSize: 16 }}>{cat.icon}</span>
+                  <span style={{
+                    fontSize: 12, fontWeight: selectedStat === cat.id ? 700 : 500,
+                    color: selectedStat === cat.id ? VR.accent : VR.text,
+                    fontFamily: VR.display, letterSpacing: '0.04em',
+                  }}>
+                    {cat.name}
+                  </span>
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: '#64748B' }}>
-              Task title
-            </label>
+          {/* Title */}
+          <div>
+            <label style={labelStyle}>Task title</label>
             <input
               type="text"
               value={title}
               onChange={e => setTitle(e.target.value)}
-              placeholder="e.g. Start a conversation with a stranger"
-              className="w-full px-4 py-4 rounded-2xl text-base outline-none border"
-              style={{
-                backgroundColor: '#1B1F3B',
-                borderColor: title.length > 3 ? '#7C3AED' : '#2D3158',
-                color: '#F1F5F9',
-              }}
+              placeholder="e.g. Run 5km without stopping"
+              style={inputStyle}
+              onFocus={e => { e.currentTarget.style.borderColor = VR.accent }}
+              onBlur={e => { e.currentTarget.style.borderColor = VR.border }}
             />
           </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium" style={{ color: '#64748B' }}>
-              Details <span style={{ color: '#2D3158' }}>(optional)</span>
-            </label>
+          {/* Description */}
+          <div>
+            <label style={labelStyle}>Description <span style={{ fontWeight: 400, textTransform: 'none', letterSpacing: 0, fontStyle: 'italic', fontSize: 11 }}>(optional)</span></label>
             <textarea
               value={description}
               onChange={e => setDescription(e.target.value)}
-              placeholder="Give context, rules, or requirements..."
+              placeholder="Any extra context, rules, or expectations..."
               rows={3}
-              className="w-full px-4 py-4 rounded-2xl text-base outline-none
-                border resize-none"
-              style={{
-                backgroundColor: '#1B1F3B',
-                borderColor: '#2D3158',
-                color: '#F1F5F9',
-              }}
+              style={{ ...inputStyle, resize: 'none', lineHeight: 1.6 }}
+              onFocus={e => { e.currentTarget.style.borderColor = VR.accent }}
+              onBlur={e => { e.currentTarget.style.borderColor = VR.border }}
             />
           </div>
 
           <button
-            onClick={handleSubmit}
+            onClick={handleAssign}
             disabled={!canSubmit || loading}
-            className="w-full py-4 px-6 rounded-2xl font-bold text-base
-              tracking-wide transition-all active:scale-95 disabled:opacity-40"
-            style={{ backgroundColor: '#A3E635', color: '#0F1117' }}>
-            {loading ? 'Assigning...' : 'Assign Challenge →'}
+            style={{
+              width: '100%', padding: '14px 20px',
+              background: VR.accent, color: '#FFFFFF',
+              border: 'none', borderRadius: 12,
+              fontSize: 12, fontWeight: 700, fontFamily: VR.display,
+              letterSpacing: '0.1em', textTransform: 'uppercase',
+              cursor: (!canSubmit || loading) ? 'not-allowed' : 'pointer',
+              opacity: (!canSubmit || loading) ? 0.5 : 1,
+              boxShadow: `0 2px 12px ${VR.accent}30`,
+            }}>
+            {loading ? 'Issuing...' : 'Issue Challenge →'}
           </button>
 
         </div>

@@ -2,369 +2,243 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useRouter, useParams } from 'next/navigation'
-import Link from 'next/link'
-import type { Task, Submission } from '@/lib/types'
 import PageHeader from '@/components/PageHeader'
+import type { Task, Submission } from '@/lib/types'
+
+const VR = {
+  bg: '#EBF0E5', surface: '#DDE5D5', card: '#FFFFFF',
+  border: '#C4D0B8', text: '#161D14', muted: '#627056',
+  accent: '#2D6A3F', accentMuted: '#D0E8D8', gold: '#6B8C3A',
+  approved: '#2D6A3F', rejected: '#A0302A', pending: '#7A6020', pendingBg: '#F0E4C0',
+  display: "'Cinzel','Times New Roman',serif",
+  body: "'Spectral','Georgia',serif",
+}
+
+const statusMeta: Record<string, { label: string; color: string; bg: string }> = {
+  approved:   { label: '✓ Approved',   color: '#2D6A3F', bg: '#D0E8D8' },
+  rejected:   { label: '✗ Rejected',   color: '#A0302A', bg: '#F5DADA' },
+  needs_more: { label: '→ Needs More', color: '#7A6020', bg: '#F0E4C0' },
+  pending:    { label: '◌ Awaiting Council', color: '#627056', bg: '#DDE5D5' },
+}
 
 export default function TaskDetailPage() {
-  const router = useRouter()
-  const params = useParams()
-  const taskId = params.id as string
+  const router   = useRouter()
+  const params   = useParams()
+  const taskId   = params.id as string
 
-  const [task, setTask] = useState<Task | null>(null)
+  const [task, setTask]             = useState<Task | null>(null)
   const [submission, setSubmission] = useState<Submission | null>(null)
-  const [userId, setUserId] = useState<string>('')
-  const [note, setNote] = useState('')
-  const [file, setFile] = useState<File | null>(null)
-  const [loading, setLoading] = useState(false)
+  const [userId, setUserId]         = useState('')
+  const [note, setNote]             = useState('')
+  const [file, setFile]             = useState<File | null>(null)
+  const [loading, setLoading]       = useState(false)
   const [pageLoading, setPageLoading] = useState(true)
-  const [submitted, setSubmitted] = useState(false)
   const [uploadError, setUploadError] = useState('')
 
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.push('/login'); return }
-
+      if (!user) { router.push('/'); return }
       setUserId(user.id)
 
-      const { data: taskData, error: taskError } = await supabase
+      const { data: taskData, error } = await supabase
         .from('tasks')
-        .select(`
-          *,
-          stat_categories(*),
-          assigner:profiles!tasks_assigned_by_fkey(id, full_name, username)
-        `)
-        .eq('id', taskId)
-        .single()
+        .select('*, stat_categories(*), assigner:profiles!tasks_assigned_by_fkey(id, full_name, username)')
+        .eq('id', taskId).single()
 
-      if (taskError || !taskData) { router.push('/dashboard'); return }
-
-      // Only the assignee or council members should see this
+      if (error || !taskData) { router.push('/dashboard'); return }
       setTask(taskData as Task)
 
       const { data: subData } = await supabase
-        .from('submissions')
-        .select('*, feedback(*)')
-        .eq('task_id', taskId)
-        .eq('user_id', user.id)
-        .order('submitted_at', { ascending: false })
-        .limit(1)
+        .from('submissions').select('*, feedback(*)')
+        .eq('task_id', taskId).eq('user_id', user.id)
+        .order('submitted_at', { ascending: false }).limit(1)
 
-      if (subData && subData.length > 0) {
-        setSubmission(subData[0] as Submission)
-      }
-
+      if (subData?.length) setSubmission(subData[0] as Submission)
       setPageLoading(false)
     }
-
     load()
   }, [taskId, router])
 
   const handleSubmit = async () => {
     if (!note.trim() && !file) return
     if (!task || task.assigned_to !== userId) return
-
-    setLoading(true)
-    setUploadError('')
+    setLoading(true); setUploadError('')
 
     let mediaUrl: string | null = null
 
     if (file) {
-      const MAX_SIZE = 10 * 1024 * 1024 // 10MB
-      if (file.size > MAX_SIZE) {
-        setUploadError('File must be under 10MB')
-        setLoading(false)
-        return
-      }
+      const MAX = 10 * 1024 * 1024
+      if (file.size > MAX) { setUploadError('File must be under 10MB'); setLoading(false); return }
+      const allowed = ['image/jpeg','image/png','image/gif','image/webp','video/mp4']
+      if (!allowed.includes(file.type)) { setUploadError('Only images (JPG, PNG, GIF, WebP) and MP4 allowed'); setLoading(false); return }
 
-      const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'video/mp4']
-      if (!allowedTypes.includes(file.type)) {
-        setUploadError('Only images (JPG, PNG, GIF, WebP) and MP4 videos are allowed')
-        setLoading(false)
-        return
-      }
-
-      const ext = file.name.split('.').pop()
+      const ext  = file.name.split('.').pop()
       const path = `${userId}/${taskId}-${Date.now()}.${ext}`
-
-      const { error: uploadError } = await supabase.storage
-        .from('submissions')
-        .upload(path, file)
-
-      if (uploadError) {
-        setUploadError('Upload failed. Please try again.')
-        setLoading(false)
-        return
-      }
-
-      const { data: urlData } = supabase.storage
-        .from('submissions')
-        .getPublicUrl(path)
-
+      const { error: uploadErr } = await supabase.storage.from('submissions').upload(path, file)
+      if (uploadErr) { setUploadError('Upload failed. Please try again.'); setLoading(false); return }
+      const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(path)
       mediaUrl = urlData.publicUrl
     }
 
-    if (submission?.status === 'pending') {
-      setLoading(false)
-      return
-    }
+    if (submission?.status === 'pending') { setLoading(false); return }
 
-    const { data: newSubmission, error } = await supabase
+    const { data: newSub, error } = await supabase
       .from('submissions')
-      .insert({
-        task_id: taskId,
-        user_id: userId,
-        note: note.trim() || null,
-        media_url: mediaUrl,
-        status: 'pending',
-      })
-      .select()
-      .single()
+      .insert({ task_id: taskId, user_id: userId, note: note.trim() || null, media_url: mediaUrl, status: 'pending' })
+      .select().single()
 
-    if (!error && newSubmission) {
-      setSubmission(newSubmission as Submission)
-      setSubmitted(true)
-    }
-
+    if (!error && newSub) setSubmission(newSub as Submission)
     setLoading(false)
   }
 
-  const statusColor = (status: string) => {
-    if (status === 'approved') return '#A3E635'
-    if (status === 'rejected') return '#EF4444'
-    if (status === 'needs_more') return '#F59E0B'
-    if (status === 'pending') return '#7C3AED'
-    return '#64748B'
-  }
-
-  const statusLabel = (status: string) => {
-    if (status === 'approved') return '✓ Approved'
-    if (status === 'rejected') return '✗ Rejected'
-    if (status === 'needs_more') return '→ Needs More'
-    if (status === 'pending') return 'Awaiting review'
-    return status
-  }
-
-  if (pageLoading) {
-    return (
-      <main className="min-h-screen flex items-center justify-center"
-        style={{ backgroundColor: '#0F1117' }}>
-        <p style={{ color: '#64748B' }}>Loading task...</p>
-      </main>
-    )
-  }
+  if (pageLoading) return (
+    <main style={{ minHeight: '100svh', background: VR.bg, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ width: 26, height: 26, borderRadius: '50%', border: `2px solid ${VR.border}`, borderTopColor: VR.accent, animation: 'spin .85s linear infinite' }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </main>
+  )
 
   if (!task) return null
 
   const isAssignedToMe = task.assigned_to === userId
-  const canSubmit = isAssignedToMe && task.status === 'active'
-  const hasPendingSubmission = submission?.status === 'pending'
-  const taskFeedback = (submission as any)?.feedback?.[0]
+  const canSubmit      = isAssignedToMe && task.status === 'active'
+  const hasPending     = submission?.status === 'pending'
+  const feedback       = (submission as any)?.feedback?.[0]
+  const subStatus      = submission ? statusMeta[submission.status] : null
 
   return (
-    <main className="min-h-screen px-6 py-12"
-      style={{ backgroundColor: '#0F1117' }}>
-      <div className="max-w-md mx-auto space-y-6">
+    <main style={{ minHeight: '100svh', background: VR.bg, padding: '0 20px 60px', fontFamily: VR.body }}>
+      <div style={{ maxWidth: 440, margin: '0 auto', paddingTop: 'calc(env(safe-area-inset-top,0px) + 20px)' }}>
 
         <PageHeader title="Task" backHref="/dashboard" />
 
         {/* Task card */}
-        <div className="p-5 rounded-2xl border space-y-4"
-          style={{ backgroundColor: '#1B1F3B', borderColor: '#2D3158' }}>
+        <div style={{ background: VR.card, border: `1px solid ${VR.border}`, borderRadius: 14, padding: '18px 18px', marginBottom: 16, boxShadow: '0 2px 12px rgba(22,29,20,0.06)' }}>
 
-          <div className="flex items-start justify-between gap-3">
-            <div className="space-y-1 flex-1">
-              <p className="text-xs tracking-widest uppercase"
-                style={{ color: '#64748B' }}>
-                {(task as any).stat_categories?.icon}{' '}
-                {(task as any).stat_categories?.name}
-              </p>
-              <h1 className="font-black text-xl leading-tight"
-                style={{ color: '#F1F5F9' }}>
+          {/* Stat + status */}
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
+                <span style={{ fontSize: 16 }}>{(task as any).stat_categories?.icon}</span>
+                <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.muted }}>
+                  {(task as any).stat_categories?.name}
+                </span>
+              </div>
+              <h2 style={{ fontSize: 18, fontWeight: 700, fontFamily: VR.display, color: VR.text, letterSpacing: '0.02em', lineHeight: 1.3, margin: 0 }}>
                 {task.title}
-              </h1>
+              </h2>
             </div>
-            <span className="text-xs font-bold px-3 py-1 rounded-full flex-shrink-0"
-              style={{
-                backgroundColor: '#0F1117',
-                color: statusColor(task.status),
-              }}>
-              {task.status}
-            </span>
+            {subStatus && (
+              <span style={{
+                fontSize: 9, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase',
+                fontFamily: VR.display, padding: '4px 10px', borderRadius: 4, whiteSpace: 'nowrap',
+                color: subStatus.color, background: subStatus.bg,
+                border: `1px solid ${subStatus.color}30`,
+              }}>{subStatus.label}</span>
+            )}
           </div>
 
+          {/* Description */}
           {task.description && (
-            <p className="text-sm leading-relaxed"
-              style={{ color: '#64748B' }}>
+            <p style={{ fontSize: 13, lineHeight: 1.65, color: VR.muted, fontStyle: 'italic', paddingTop: 12, borderTop: `1px solid ${VR.border}` }}>
               {task.description}
             </p>
           )}
 
+          {/* Assigner */}
           {(task as any).assigner && (
-            <p className="text-xs" style={{ color: '#64748B' }}>
-              Assigned by{' '}
-              <span style={{ color: '#F1F5F9' }}>
+            <div style={{ marginTop: 12, paddingTop: 12, borderTop: `1px solid ${VR.border}`, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span style={{ fontSize: 11, color: VR.muted }}>Assigned by</span>
+              <span style={{ fontSize: 12, fontWeight: 600, color: VR.text }}>
                 {(task as any).assigner.full_name || `@${(task as any).assigner.username}`}
               </span>
-            </p>
-          )}
-
-          {task.due_date && (
-            <p className="text-xs" style={{ color: '#64748B' }}>
-              Due{' '}
-              <span style={{ color: '#F1F5F9' }}>
-                {new Date(task.due_date).toLocaleDateString('en-GB', {
-                  day: 'numeric',
-                  month: 'short',
-                })}
-              </span>
-            </p>
+            </div>
           )}
         </div>
 
-        {/* Existing submission */}
-        {submission && (
-          <div className="p-5 rounded-2xl border space-y-3"
-            style={{
-              backgroundColor: '#1B1F3B',
-              borderColor: statusColor(submission.status),
-            }}>
-            <div className="flex items-center justify-between">
-              <p className="text-xs tracking-widest uppercase"
-                style={{ color: '#64748B' }}>YOUR SUBMISSION</p>
-              <span className="text-xs font-bold"
-                style={{ color: statusColor(submission.status) }}>
-                {statusLabel(submission.status)}
-              </span>
-            </div>
-
-            {submission.note && (
-              <p className="text-sm leading-relaxed"
-                style={{ color: '#F1F5F9' }}>
-                "{submission.note}"
+        {/* Feedback from previous review */}
+        {feedback && (
+          <div style={{
+            background: subStatus ? subStatus.bg : VR.surface,
+            border: `1px solid ${subStatus ? subStatus.color + '30' : VR.border}`,
+            borderRadius: 12, padding: '14px 16px', marginBottom: 16,
+          }}>
+            <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.2em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.muted, marginBottom: 8 }}>
+              Council Feedback
+            </p>
+            {feedback.comment ? (
+              <p style={{ fontSize: 13, lineHeight: 1.6, color: VR.text, fontStyle: 'italic' }}>
+                "{feedback.comment}"
               </p>
-            )}
-
-            {submission.media_url && (
-              <img
-                src={submission.media_url}
-                alt="Your submission"
-                className="w-full rounded-xl object-cover max-h-48"
-              />
-            )}
-
-            {taskFeedback?.comment && (
-              <div className="p-3 rounded-xl"
-                style={{ backgroundColor: '#0F1117' }}>
-                <p className="text-xs tracking-widest uppercase mb-1"
-                  style={{ color: '#64748B' }}>COUNCIL FEEDBACK</p>
-                <p className="text-sm italic"
-                  style={{ color: '#F1F5F9' }}>
-                  "{taskFeedback.comment}"
-                </p>
-              </div>
+            ) : (
+              <p style={{ fontSize: 13, color: VR.muted, fontStyle: 'italic' }}>No comment left.</p>
             )}
           </div>
         )}
 
-        {/* Submit form */}
-        {canSubmit && !hasPendingSubmission && !submitted && (
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <p className="text-xs tracking-widest uppercase"
-                style={{ color: '#64748B' }}>SUBMIT YOUR WORK</p>
-              <textarea
-                value={note}
-                onChange={e => setNote(e.target.value)}
-                placeholder="What did you do? Be specific — your Council needs details to judge this fairly."
-                rows={4}
-                className="w-full px-4 py-4 rounded-2xl text-sm outline-none
-                  border resize-none"
-                style={{
-                  backgroundColor: '#1B1F3B',
-                  borderColor: note.length > 0 ? '#7C3AED' : '#2D3158',
-                  color: '#F1F5F9',
-                }}
-              />
-            </div>
+        {/* Submission form */}
+        {canSubmit && !hasPending && (
+          <div style={{ background: VR.card, border: `1px solid ${VR.border}`, borderRadius: 14, padding: '18px 18px', boxShadow: '0 2px 12px rgba(22,29,20,0.06)' }}>
+            <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.22em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.muted, marginBottom: 14 }}>
+              {submission?.status === 'needs_more' ? 'Resubmit your work' : 'Submit your work'}
+            </p>
 
-            <div className="space-y-2">
-              <label className="text-xs tracking-widest uppercase"
-                style={{ color: '#64748B' }}>
-                PROOF (optional)
-              </label>
-              <label
-                className="w-full py-3 px-4 rounded-2xl border text-sm
-                  cursor-pointer flex items-center justify-center gap-2
-                  transition-all active:scale-95"
-                style={{ borderColor: '#2D3158', color: '#64748B' }}>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp,video/mp4"
-                  onChange={e => setFile(e.target.files?.[0] || null)}
-                  className="hidden"
-                />
-                {file ? `📎 ${file.name}` : '+ Attach photo or video'}
-              </label>
-              {uploadError && (
-                <p className="text-xs" style={{ color: '#EF4444' }}>
-                  {uploadError}
-                </p>
-              )}
-            </div>
+            <textarea
+              value={note}
+              onChange={e => setNote(e.target.value)}
+              placeholder="Describe what you did, what you learned, any proof of completion..."
+              rows={4}
+              style={{
+                width: '100%', padding: '13px 16px',
+                border: `1.5px solid ${note.length > 0 ? VR.accent : VR.border}`,
+                borderRadius: 10, fontSize: 14, color: VR.text, background: VR.card,
+                outline: 'none', resize: 'none', lineHeight: 1.6,
+                fontFamily: VR.body, marginBottom: 12,
+                transition: 'border-color 0.15s', boxSizing: 'border-box',
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = VR.accent }}
+              onBlur={e => { e.currentTarget.style.borderColor = note.length > 0 ? VR.accent : VR.border }}
+            />
+
+            {/* File upload */}
+            <label style={{
+              display: 'block', padding: '11px 16px',
+              border: `1.5px dashed ${VR.border}`, borderRadius: 10,
+              cursor: 'pointer', marginBottom: 12, textAlign: 'center',
+              background: file ? VR.accentMuted : VR.surface,
+            }}>
+              <input type="file" accept="image/*,video/mp4" onChange={e => setFile(e.target.files?.[0] || null)} style={{ display: 'none' }} />
+              <p style={{ fontSize: 12, color: file ? VR.accent : VR.muted, fontWeight: 600 }}>
+                {file ? `✓ ${file.name}` : '+ Attach image or video (optional)'}
+              </p>
+            </label>
+
+            {uploadError && <p style={{ fontSize: 12, color: VR.rejected, marginBottom: 10 }}>{uploadError}</p>}
 
             <button
               onClick={handleSubmit}
-              disabled={loading || (!note.trim() && !file)}
-              className="w-full py-4 px-6 rounded-2xl font-bold text-base
-                tracking-wide transition-all active:scale-95 disabled:opacity-40"
-              style={{ backgroundColor: '#7C3AED', color: '#F1F5F9' }}>
+              disabled={(!note.trim() && !file) || loading}
+              style={{
+                width: '100%', padding: '13px 20px',
+                background: VR.accent, color: '#FFFFFF',
+                border: 'none', borderRadius: 10,
+                fontSize: 12, fontWeight: 700, fontFamily: VR.display,
+                letterSpacing: '0.1em', textTransform: 'uppercase',
+                cursor: ((!note.trim() && !file) || loading) ? 'not-allowed' : 'pointer',
+                opacity: ((!note.trim() && !file) || loading) ? 0.5 : 1,
+              }}>
               {loading ? 'Submitting...' : 'Submit to Council →'}
             </button>
-
-            {!note.trim() && !file && (
-              <p className="text-xs text-center" style={{ color: '#64748B' }}>
-                Add a note or photo to submit
-              </p>
-            )}
           </div>
         )}
 
-        {/* Success state */}
-        {submitted && (
-          <div className="p-5 rounded-2xl border text-center space-y-2"
-            style={{ borderColor: '#A3E635' }}>
-            <p className="font-bold" style={{ color: '#A3E635' }}>
-              ✓ Submitted to your Council.
-            </p>
-            <p className="text-sm" style={{ color: '#64748B' }}>
-              {(task as any).assigner
-                ? `${(task as any).assigner.full_name || 'They'} will review it soon.`
-                : 'Your Council will review it soon.'}
-            </p>
-          </div>
-        )}
-
-        {/* Waiting state */}
-        {hasPendingSubmission && !submitted && (
-          <div className="p-5 rounded-2xl border text-center space-y-2"
-            style={{ borderColor: '#7C3AED' }}>
-            <p className="font-bold" style={{ color: '#7C3AED' }}>
-              Waiting for your Council.
-            </p>
-            <p className="text-sm" style={{ color: '#64748B' }}>
-              Hang tight — they'll review your submission soon.
-            </p>
-          </div>
-        )}
-
-        {!isAssignedToMe && (
-          <div className="p-4 rounded-2xl border text-center"
-            style={{ borderColor: '#2D3158' }}>
-            <p className="text-sm" style={{ color: '#64748B' }}>
-              This task was not assigned to you.
-            </p>
+        {/* Awaiting review message */}
+        {hasPending && (
+          <div style={{ padding: '20px 18px', background: VR.surface, border: `1px solid ${VR.border}`, borderRadius: 14, textAlign: 'center' }}>
+            <p style={{ fontSize: 20, marginBottom: 8 }}>⏳</p>
+            <p style={{ fontSize: 13, fontWeight: 700, fontFamily: VR.display, color: VR.text, marginBottom: 4 }}>Awaiting Council review</p>
+            <p style={{ fontSize: 12, color: VR.muted, fontStyle: 'italic' }}>Your submission has been sent. The Council will weigh in soon.</p>
           </div>
         )}
 

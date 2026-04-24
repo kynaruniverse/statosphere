@@ -2,57 +2,120 @@
 @tailwind components;
 @tailwind utilities;
 
-* {
+/* ── Fonts ──────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Spectral:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&display=swap');
+
+/* ── Verdant Ruin tokens ────────────────────────────────── */
+:root {
+  --vr-bg:           #EBF0E5;
+  --vr-surface:      #DDE5D5;
+  --vr-card:         #FFFFFF;
+  --vr-border:       #C4D0B8;
+  --vr-border-deep:  #A8BCA0;
+  --vr-text:         #161D14;
+  --vr-muted:        #627056;
+  --vr-accent:       #2D6A3F;
+  --vr-accent-muted: #D0E8D8;
+  --vr-gold:         #6B8C3A;
+  --vr-gold-bg:      #E8F0D4;
+  --vr-stat-fill:    #2D6A3F;
+  --vr-stat-bg:      #DDE5D5;
+  --vr-approved:     #2D6A3F;
+  --vr-rejected:     #A0302A;
+  --vr-pending:      #7A6020;
+  --vr-pending-bg:   #F0E4C0;
+  --vr-shadow:       0 2px 24px rgba(22, 29, 20, 0.08), 0 1px 3px rgba(22, 29, 20, 0.04);
+  --vr-shadow-lg:    0 8px 48px rgba(22, 29, 20, 0.12), 0 2px 8px rgba(22, 29, 20, 0.06);
+
+  /* Fonts */
+  --font-display: 'Cinzel', 'Times New Roman', serif;
+  --font-body:    'Spectral', 'Georgia', serif;
+  --font-mono:    'JetBrains Mono', 'Courier New', monospace;
+}
+
+/* ── Base reset ─────────────────────────────────────────── */
+*, *::before, *::after {
   box-sizing: border-box;
   padding: 0;
   margin: 0;
 }
 
-html,
-body {
+html, body {
   max-width: 100vw;
   overflow-x: hidden;
-  background-color: #0F1117;
-  color: #F1F5F9;
+  background-color: var(--vr-bg);
+  color: var(--vr-text);
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
-}
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #0F1117; }
-::-webkit-scrollbar-thumb {
-  background: #7C3AED;
-  border-radius: 2px;
-}
-
-/* Prevent text size adjust on mobile */
-html {
+  -moz-osx-font-smoothing: grayscale;
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
 }
 
-/* Smooth tap feedback */
+/* ── Scrollbar ──────────────────────────────────────────── */
+::-webkit-scrollbar { width: 4px; }
+::-webkit-scrollbar-track { background: var(--vr-surface); }
+::-webkit-scrollbar-thumb {
+  background: var(--vr-border-deep);
+  border-radius: 2px;
+}
+
+/* ── Tap / touch ─────────────────────────────────────────── */
 button, a {
   -webkit-tap-highlight-color: transparent;
   touch-action: manipulation;
 }
 
-/* Input autofill override */
+/* ── Autofill — light bg ─────────────────────────────────── */
 input:-webkit-autofill,
 input:-webkit-autofill:hover,
 input:-webkit-autofill:focus {
-  -webkit-box-shadow: 0 0 0px 1000px #1B1F3B inset;
-  -webkit-text-fill-color: #F1F5F9;
+  -webkit-box-shadow: 0 0 0px 1000px var(--vr-card) inset;
+  -webkit-text-fill-color: var(--vr-text);
   transition: background-color 5000s ease-in-out 0s;
 }
 
-/* Select styling */
+/* ── Select arrow ───────────────────────────────────────── */
 select {
   appearance: none;
   -webkit-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2364748B' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%23627056' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 16px center;
   padding-right: 40px !important;
+}
+
+/* ── RPG stat bar animation ─────────────────────────────── */
+@keyframes statFill {
+  from { width: 0 }
+}
+
+/* ── Divider glyph ──────────────────────────────────────── */
+.vr-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--vr-border-deep);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+}
+.vr-divider::before,
+.vr-divider::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  background: var(--vr-border);
+}
+
+/* ── Status badge clip ──────────────────────────────────── */
+.vr-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  font-family: var(--font-display);
 }

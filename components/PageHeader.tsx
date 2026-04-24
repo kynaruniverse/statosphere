@@ -8,29 +8,68 @@ type Props = {
 }
 
 export default function PageHeader({
-  title, backHref, backLabel = '← Back', action
+  title, backHref, backLabel = '← Back', action,
 }: Props) {
   return (
-    <div className="flex items-center justify-between">
-      <div className="space-y-1">
-        <p className="text-xs tracking-[0.3em] uppercase"
-          style={{ color: '#7C3AED' }}>
-          STATOSPHERE
-        </p>
-        <h1 className="text-2xl font-black" style={{ color: '#F1F5F9' }}>
+    <div>
+      {/* Eyebrow */}
+      <p style={{
+        fontSize: 9,
+        fontWeight: 700,
+        letterSpacing: '0.28em',
+        textTransform: 'uppercase',
+        color: 'var(--vr-accent)',
+        fontFamily: 'var(--font-display)',
+        marginBottom: 6,
+      }}>
+        Statosphere
+      </p>
+
+      {/* Title + action row */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'flex-end',
+        justifyContent: 'space-between',
+        gap: 12,
+        paddingBottom: 16,
+        borderBottom: '1px solid var(--vr-border)',
+        marginBottom: 28,
+      }}>
+        <h1 style={{
+          fontSize: 22,
+          fontWeight: 700,
+          color: 'var(--vr-text)',
+          fontFamily: 'var(--font-display)',
+          letterSpacing: '0.02em',
+          lineHeight: 1.2,
+          margin: 0,
+        }}>
           {title}
         </h1>
-      </div>
-      <div className="flex items-center gap-2">
-        {action}
-        {backHref && (
-          <Link
-            href={backHref}
-            className="text-sm px-4 py-2 rounded-xl border"
-            style={{ borderColor: '#2D3158', color: '#64748B' }}>
-            {backLabel}
-          </Link>
-        )}
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+          {action}
+          {backHref && (
+            <Link
+              href={backHref}
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                fontFamily: 'var(--font-display)',
+                letterSpacing: '0.08em',
+                padding: '6px 12px',
+                border: '1px solid var(--vr-border)',
+                borderRadius: 6,
+                color: 'var(--vr-muted)',
+                textDecoration: 'none',
+                background: 'var(--vr-card)',
+                transition: 'border-color 0.15s, color 0.15s',
+              }}
+            >
+              {backLabel}
+            </Link>
+          )}
+        </div>
       </div>
     </div>
   )
