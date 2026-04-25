@@ -155,20 +155,51 @@ export default function HomePage() {
 
   // ── Auth check ──────────────────────────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      if (user) router.replace('/dashboard')
-      else setReady(true)
-    })
+    const init = async () => {
+      const { data: { session } } = await supabase.auth.getSession()
+  
+      if (session?.user) {
+        router.replace('/dashboard')
+      } else {
+        setReady(true)
+      }
+    }
+  
+    init()
+  
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+          router.replace('/dashboard')
+        }
+      }
+    )
+  
+    return () => listener.subscription.unsubscribe()
   }, [router])
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
   const afterAuth = async (userId: string, defaultRoute: string) => {
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('onboarding_complete')
-      .eq('id', userId)
-      .single()
-    router.replace(profile?.onboarding_complete ? '/dashboard' : '/onboarding')
+    try {
+      const { data: profile, error } = await supabase
+        .from('profiles')
+        .select('onboarding_complete')
+        .eq('id', userId)
+        .maybeSingle()
+  
+      if (error) {
+        console.error('Profile fetch error:', error)
+        router.replace(defaultRoute)
+        return
+      }
+  
+      router.replace(
+        profile?.onboarding_complete ? '/dashboard' : '/onboarding'
+      )
+    } catch (err) {
+      console.error('afterAuth crash:', err)
+      router.replace(defaultRoute)
+    }
   }
 
   const resetForm = () => {
@@ -185,59 +216,73 @@ export default function HomePage() {
 
   // ── Login ────────────────────────────────────────────────────────────────────
   const handleLogin = async () => {
-    if (!email.trim() || !password) return
-    setLoading(true)
-    setError('')
-
-    const { data, error: signInError } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
-      password,
-    })
-
-    if (signInError) {
-      setError(
-        signInError.message === 'Invalid login credentials'
-          ? 'Incorrect email or password.'
-          : signInError.message
-      )
+    try {
+      if (!email.trim() || !password) return
+      setLoading(true)
+      setError('')
+  
+      const { data, error: signInError } = await supabase.auth.signInWithPassword({
+        email: email.trim().toLowerCase(),
+        password,
+      })
+  
+      if (signInError) {
+        setError(
+          signInError.message === 'Invalid login credentials'
+            ? 'Incorrect email or password.'
+            : signInError.message
+        )
+        setLoading(false)
+        return
+      }
+  
+      if (data.user) {
+        await afterAuth(data.user.id, '/dashboard')
+        return
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Something went wrong. Please try again.')
       setLoading(false)
-      return
     }
-
-    if (data.user) await afterAuth(data.user.id, '/dashboard')
   }
 
   // ── Sign up ──────────────────────────────────────────────────────────────────
   const handleSignup = async () => {
-    if (!email.trim() || !password) return
-    if (password.length < 6) {
-      setError('Password must be at least 6 characters.')
-      return
-    }
-    setLoading(true)
-    setError('')
-    setSuccessMsg('')
-
-    const { data, error: signUpError } = await supabase.auth.signUp({
-      email: email.trim().toLowerCase(),
-      password,
-    })
-
-    if (signUpError) {
-      setError(signUpError.message)
-      setLoading(false)
-      return
-    }
-
-    if (data.session) {
-      // Email confirmation is OFF — signed in immediately ✓
-      await afterAuth(data.session.user.id, '/onboarding')
-    } else {
-      // Email confirmation is ON — session won't be set here
-      setSuccessMsg(
-        'Check your inbox for a confirmation link. Once confirmed, ' +
-        'come back and sign in with your password.'
-      )
+    try {
+      if (!email.trim() || !password) return
+      if (password.length < 6) {
+        setError('Password must be at least 6 characters.')
+        return
+      }
+      setLoading(true)
+      setError('')
+      setSuccessMsg('')
+  
+      const { data, error: signUpError } = await supabase.auth.signUp({
+        email: email.trim().toLowerCase(),
+        password,
+      })
+  
+      if (signUpError) {
+        setError(signUpError.message)
+        setLoading(false)
+        return
+      }
+  
+      if (data.session) {
+        await afterAuth(data.session.user.id, '/onboarding')
+        return
+      } else {
+        setSuccessMsg(
+          'Check your inbox for a confirmation link. Once confirmed, ' +
+          'come back and sign in with your password.'
+        )
+        setLoading(false)
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Something went wrong. Please try again.')
       setLoading(false)
     }
   }
@@ -265,24 +310,33 @@ export default function HomePage() {
 
   // ── OTP: verify code ─────────────────────────────────────────────────────────
   const handleVerifyOtp = async () => {
-    const fullCode = codeInputs.join('')
-    if (fullCode.length !== 6) return
-    setLoading(true)
-    setError('')
-
-    const { data, error: verifyError } = await supabase.auth.verifyOtp({
-      email: otpEmail.trim().toLowerCase(),
-      token: fullCode,
-      type: 'email',
-    })
-
-    if (verifyError) {
-      setError('Incorrect code. Please try again.')
+    try {
+      const fullCode = codeInputs.join('')
+      if (fullCode.length !== 6) return
+      setLoading(true)
+      setError('')
+  
+      const { data, error: verifyError } = await supabase.auth.verifyOtp({
+        email: otpEmail.trim().toLowerCase(),
+        token: fullCode,
+        type: 'email',
+      })
+  
+      if (verifyError) {
+        setError('Incorrect code. Please try again.')
+        setLoading(false)
+        return
+      }
+  
+      if (data.user) {
+        await afterAuth(data.user.id, '/dashboard')
+        return
+      }
+    } catch (err) {
+      console.error(err)
+      setError('Something went wrong. Please try again.')
       setLoading(false)
-      return
     }
-
-    if (data.user) await afterAuth(data.user.id, '/dashboard')
   }
 
   // ── OTP code input handlers ──────────────────────────────────────────────────
