@@ -17,7 +17,7 @@ const VR = {
 
 type CouncilRequest = {
   id: string
-  from_user_id: string
+  requester_id: string        // ← correct column name in schema
   message: string | null
   created_at: string
   profiles: { full_name: string | null; username: string | null } | null
@@ -25,29 +25,38 @@ type CouncilRequest = {
 
 export default function RequestsPage() {
   const router = useRouter()
-  const [requests, setRequests] = useState<CouncilRequest[]>([])
-  const [loading, setLoading]   = useState(true)
-  const [acting, setActing]     = useState<string | null>(null)
-  const [councilId, setCouncilId] = useState<string | null>(null)
+  const [requests, setRequests]   = useState<CouncilRequest[]>([])
+  const [loading, setLoading]     = useState(true)
+  const [acting, setActing]       = useState<string | null>(null)
+  const [userId, setUserId]       = useState('')
   const [seatsLeft, setSeatsLeft] = useState(5)
+  const [councilId, setCouncilId] = useState<string | null>(null)
 
   useEffect(() => {
     const load = async () => {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) { router.push('/'); return }
+      setUserId(user.id)
 
-      const { data: council } = await supabase.from('councils').select('id').eq('owner_id', user.id).single()
-      if (!council) { setLoading(false); return }
-      setCouncilId(council.id)
+      // Seat count
+      const { data: council } = await supabase
+        .from('councils').select('id').eq('owner_id', user.id).single()
+      if (council) {
+        setCouncilId(council.id)
+        const { count } = await supabase
+          .from('council_members')
+          .select('id', { count: 'exact', head: true })
+          .eq('council_id', council.id)
+          .eq('status', 'active')
+        setSeatsLeft(5 - (count || 0))
+      }
 
-      const { data: active } = await supabase.from('council_members')
-        .select('id', { count: 'exact' }).eq('council_id', council.id).eq('status', 'active')
-      setSeatsLeft(5 - (active?.length || 0))
-
+      // ── Fetch requests targeting this user ────────────────────────────────
+      // Schema: council_requests.target_user_id = this user's id
       const { data: reqs } = await supabase
         .from('council_requests')
-        .select('*, profiles:from_user_id(full_name, username)')
-        .eq('council_id', council.id)
+        .select('*, profiles:requester_id(full_name, username)')
+        .eq('target_user_id', user.id)          // ← correct column
         .eq('status', 'pending')
         .order('created_at', { ascending: true })
 
@@ -61,12 +70,17 @@ export default function RequestsPage() {
     if (!councilId) return
     setActing(req.id)
 
-    await supabase.from('council_requests').update({ status: accepted ? 'accepted' : 'declined' }).eq('id', req.id)
+    // Update the request status
+    await supabase
+      .from('council_requests')
+      .update({ status: accepted ? 'accepted' : 'declined' })
+      .eq('id', req.id)
 
     if (accepted && seatsLeft > 0) {
+      // Add requester as an active council member
       await supabase.from('council_members').insert({
         council_id: councilId,
-        member_id: req.from_user_id,
+        member_id: req.requester_id,            // ← correct column
         status: 'active',
       })
       setSeatsLeft(s => s - 1)
@@ -117,11 +131,11 @@ export default function RequestsPage() {
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {requests.map(req => {
-              const name = req.profiles?.full_name || (req.profiles?.username ? `@${req.profiles.username}` : 'Unknown')
+              const name = req.profiles?.full_name
+                || (req.profiles?.username ? `@${req.profiles.username}` : 'Unknown')
               return (
                 <div key={req.id} style={{
-                  background: VR.card,
-                  border: `1px solid ${VR.border}`,
+                  background: VR.card, border: `1px solid ${VR.border}`,
                   borderRadius: 14, overflow: 'hidden',
                   boxShadow: '0 2px 10px rgba(22,29,20,0.05)',
                 }}>
@@ -152,11 +166,7 @@ export default function RequestsPage() {
                   {/* Message */}
                   {req.message && (
                     <div style={{ padding: '0 18px 14px' }}>
-                      <div style={{
-                        background: VR.surface,
-                        border: `1px solid ${VR.border}`,
-                        borderRadius: 10, padding: '12px 14px',
-                      }}>
+                      <div style={{ background: VR.surface, border: `1px solid ${VR.border}`, borderRadius: 10, padding: '12px 14px' }}>
                         <p style={{ fontSize: 9, fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', fontFamily: VR.display, color: VR.muted, marginBottom: 6 }}>Their message</p>
                         <p style={{ fontSize: 13, lineHeight: 1.6, color: VR.text, fontStyle: 'italic' }}>"{req.message}"</p>
                       </div>
@@ -164,35 +174,17 @@ export default function RequestsPage() {
                   )}
 
                   {/* Action row */}
-                  <div style={{
-                    borderTop: `1px solid ${VR.border}`,
-                    padding: '12px 18px',
-                    display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8,
-                  }}>
+                  <div style={{ borderTop: `1px solid ${VR.border}`, padding: '12px 18px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                     <button
                       onClick={() => handleDecision(req, false)}
                       disabled={acting === req.id}
-                      style={{
-                        padding: '10px', background: '#F5DADA', color: VR.rejected,
-                        border: `1px solid ${VR.rejected}30`, borderRadius: 8,
-                        fontSize: 10, fontWeight: 700, fontFamily: VR.display,
-                        letterSpacing: '0.08em', textTransform: 'uppercase',
-                        cursor: acting === req.id ? 'not-allowed' : 'pointer',
-                        opacity: acting === req.id ? 0.5 : 1,
-                      }}>
+                      style={{ padding: '10px', background: '#F5DADA', color: VR.rejected, border: `1px solid ${VR.rejected}30`, borderRadius: 8, fontSize: 10, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: acting === req.id ? 'not-allowed' : 'pointer', opacity: acting === req.id ? 0.5 : 1 }}>
                       ✗ Decline
                     </button>
                     <button
                       onClick={() => handleDecision(req, true)}
                       disabled={acting === req.id || seatsLeft === 0}
-                      style={{
-                        padding: '10px', background: VR.accent, color: '#FFFFFF',
-                        border: 'none', borderRadius: 8,
-                        fontSize: 10, fontWeight: 700, fontFamily: VR.display,
-                        letterSpacing: '0.08em', textTransform: 'uppercase',
-                        cursor: (acting === req.id || seatsLeft === 0) ? 'not-allowed' : 'pointer',
-                        opacity: (acting === req.id || seatsLeft === 0) ? 0.5 : 1,
-                      }}>
+                      style={{ padding: '10px', background: VR.accent, color: '#FFFFFF', border: 'none', borderRadius: 8, fontSize: 10, fontWeight: 700, fontFamily: VR.display, letterSpacing: '0.08em', textTransform: 'uppercase', cursor: (acting === req.id || seatsLeft === 0) ? 'not-allowed' : 'pointer', opacity: (acting === req.id || seatsLeft === 0) ? 0.5 : 1 }}>
                       {seatsLeft === 0 ? 'Full' : '✓ Accept'}
                     </button>
                   </div>

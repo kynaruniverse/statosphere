@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import './globals.css'
+import BottomNav from '@/components/BottomNav'
 
 export const metadata: Metadata = {
   title: {
@@ -7,14 +8,7 @@ export const metadata: Metadata = {
     template: '%s — Statosphere',
   },
   description: 'Your personal growth, structured by people who know you.',
-  keywords: [
-    'personal development',
-    'accountability',
-    'self improvement',
-    'habit tracking',
-    'council',
-    'growth',
-  ],
+  keywords: ['personal development', 'accountability', 'self improvement', 'habit tracking', 'council', 'growth'],
   authors: [{ name: 'Statosphere' }],
   creator: 'Statosphere',
   openGraph: {
@@ -30,10 +24,7 @@ export const metadata: Metadata = {
     title: 'Statosphere',
     description: 'Your personal growth, structured by people who know you.',
   },
-  robots: {
-    index: true,
-    follow: true,
-  },
+  robots: { index: true, follow: true },
 }
 
 export const viewport: Viewport = {
@@ -42,21 +33,16 @@ export const viewport: Viewport = {
   themeColor: '#EBF0E5',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body
-        style={{
-          fontFamily: "'Spectral', 'Georgia', serif",
-          backgroundColor: '#EBF0E5',
-          color: '#161D14',
-        }}
-      >
+      <body style={{
+        fontFamily: "'Spectral','Georgia',serif",
+        backgroundColor: '#EBF0E5',
+        color: '#161D14',
+      }}>
         {children}
+        <BottomNav />
       </body>
     </html>
   )
