@@ -124,19 +124,26 @@ export default function DashboardPage() {
 
   useEffect(() => {
     const load = async () => {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) { router.replace('/'); return }
-      setUserId(user.id)
+      try {
+        const { data: { session } } = await supabase.auth.getSession()
 
-      const [
-        { data: profileData },
-        { data: statsData },
-        { data: streaksData },
-        { data: tasksData },
-        { data: councilData },
-        { data: pendingData },
-      ] = await Promise.all([
-        supabase.from('profiles').select('*').eq('id', user.id).single(),
+        if (!session?.user) {
+          router.replace('/')
+          return
+        }
+
+        const user = session.user
+        setUserId(user.id)
+
+        const [
+          { data: profileData, error: profileError },
+          { data: statsData, error: statsError },
+          { data: streaksData, error: streaksError },
+          { data: tasksData, error: tasksError },
+          { data: councilData, error: councilError },
+          { data: pendingData, error: pendingError },
+        ] = await Promise.all([
+        supabase.from('profiles').select('*').eq('id', user.id).maybeSingle(),
         supabase.from('user_stats').select('*, stat_categories(*)').eq('user_id', user.id),
         supabase.from('streaks').select('*').eq('user_id', user.id),
         supabase.from('tasks')
@@ -144,14 +151,22 @@ export default function DashboardPage() {
           .eq('assigned_to', user.id)
           .eq('status', 'active')
           .order('created_at', { ascending: false }),
-        supabase.from('councils').select('id').eq('owner_id', user.id).single(),
+        supabase.from('councils').select('id').eq('owner_id', user.id).maybeSingle(),
         supabase.from('pending_stat_changes')
           .select('*, stat_categories(name, icon)')
           .eq('user_id', user.id)
           .eq('applied', false),
       ])
 
-      if (!profileData?.onboarding_complete) { router.replace('/onboarding'); return }
+      if (!profileData) {
+        router.replace('/onboarding')
+        return
+      }
+
+      if (!profileData.onboarding_complete) {
+        router.replace('/onboarding')
+        return
+      }
 
       setProfile(profileData)
       setUserStats(statsData || [])
@@ -171,8 +186,12 @@ export default function DashboardPage() {
       }
 
       setLoading(false)
-    }
-    load()
+        } catch (err) {
+          console.error('Dashboard load crash:', err)
+          router.replace('/')
+        }
+      }
+      load()
   }, [router])
 
   const getStreakForStat = (statCategoryId: string) =>
@@ -186,7 +205,7 @@ export default function DashboardPage() {
   )
 
   // ── Spinner ─────────────────────────────────────────────────────────────────
-  if (loading) {
+  if (loading || !profile) {
     return (
       <main style={{
         minHeight: '100svh',
