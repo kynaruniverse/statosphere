@@ -64,7 +64,7 @@ export default function AssignTaskPage() {
           .eq('council_id', council.id)
           .eq('status', 'active')
         if (membersData) {
-          setMembers(membersData as Member[])
+          setMembers(membersData as unknown as Member[])
           membersData.forEach((m: any) => {
             if (m.member_id !== user.id) {
               list.push({
